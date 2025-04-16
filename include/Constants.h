@@ -1,0 +1,16 @@
+#pragma once
+
+#define POPULATION_SIZE 512
+#define MAX_CAPACITY 20
+#define ELITE_COUNT 64
+#define MUTATION_RATE 0.05f
+#define MAX_RECURSION_DEPTH 3
+
+#define MAX_WORKERS_PER_VAN 10
+#define MAX_VANS 20
+#define GAS_PRICE_PER_LITER 1.11
+#define KM_PER_LITER 11.8
+#define GARAGE_LAT -6.015
+#define GARAGE_LON -80.682
+#define FIELD_LAT -5.720
+#define FIELD_LON -80.645

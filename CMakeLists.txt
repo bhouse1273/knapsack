@@ -21,6 +21,7 @@ set(CMAKE_CXX_STANDARD 17)
 include_directories(
   ${CUDA_INCLUDE_DIRS}
   include
+  ../knapsack-library/src    # Add this line for knapsack_c.h
 )
 
 file(GLOB_RECURSE SOURCES "src/*.cpp")
@@ -29,7 +30,11 @@ file(GLOB_RECURSE KERNELS
   "kernels/*.cu"
 )
 
+# Add the knapsack_c.cpp file from knapsack-library
+set(KNAPSACK_C_FILE "../knapsack-library/src/knapsack_c.cpp")
+
 add_executable(knapsack_solver
   ${SOURCES}
+  ${KNAPSACK_C_FILE}    # Add this line
   ${KERNELS}
 )

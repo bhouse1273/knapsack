@@ -1,105 +1,204 @@
+// C API
 #include "knapsack_c.h"
+
+// CPU helpers
 #include "InputModule.h"
-#include "RecursiveSolver.h"
-#include "Context.h"
-#include "VanRouteWriter.h"
-#include "RoutePlanner.h"
-#include <cuda_runtime.h>
-#include <iostream>
+#include "RouteUtils.h"
+#include "Constants.h"
+
+#include <algorithm>
 #include <sstream>
 #include <cstring>
+#include <vector>
+#include <stdexcept>
+#include <random>
+
+// Metal C API (available on Apple; headers present regardless)
+#include "metal_api.h"
 
 extern "C" {
 
+// Minimal CPU fallback: greedy accumulate villages into trips until target is met.
 KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
     try {
-        // Load villages (similar to main.cpp)
-        auto villages = load_villages_from_csv(csv_path);
-        int N = villages.size();
+        if (!csv_path) return nullptr;
+        std::vector<Village> villages = load_villages_from_csv(csv_path);
+        if (villages.empty()) return nullptr;
 
-        // Allocate and populate CUDA arrays
-        float *h_lat = new float[N];
-        float *h_lon = new float[N];
-        int *h_weights = new int[N];
+        // Greedy: visit villages in file order, batch into trips until target is met.
+        int remaining = std::max(0, target_team_size);
+        std::vector<int> picked(villages.size(), 0);
 
-        int total_available_workers = 0;
-        for (int i = 0; i < N; ++i) {
-            h_lat[i] = villages[i].latitude;
-            h_lon[i] = villages[i].longitude;
-            h_weights[i] = villages[i].workers;
-            total_available_workers += villages[i].workers;
+        std::vector<std::vector<int>> trips;
+        int cursor = 0;
+
+        // Simple RNG for candidate generation
+        std::mt19937 rng(12345);
+        std::uniform_int_distribution<int> bit(0, 1);
+
+        while (remaining > 0 && cursor < (int)villages.size()) {
+            // Form a block of up to 15 unpicked villages (similar to RoutePlanner)
+            std::vector<int> blockIdx;
+            for (int i = cursor; i < (int)villages.size() && (int)blockIdx.size() < 15; ++i) {
+                if (!picked[i] && villages[i].workers > 0) blockIdx.push_back(i);
+            }
+            if (blockIdx.empty()) break;
+
+            const int num_items = (int)blockIdx.size();
+            const int num_vans = 1; // one van per trip
+            const int num_candidates = 64;
+            const int bytes_per_cand = (num_items + 3) / 4; // 2 bits per item
+
+            // Prepare SoA inputs for evaluator
+            std::vector<float> values(num_items, 1.0f);
+            std::vector<float> weights(num_items, 0.0f);
+            for (int i = 0; i < num_items; ++i) {
+                const auto& v = villages[blockIdx[i]];
+                values[i] = std::max(1, v.productivityScore);
+                weights[i] = std::max(0, v.workers);
+            }
+            float van_caps_arr[1] = { (float)MAX_WORKERS_PER_VAN };
+
+            // Generate random candidates; lane 1 means assign to van 0, lane 0 unassigned
+            std::vector<unsigned char> cand(num_candidates * bytes_per_cand, 0);
+            auto set_lane = [&](int c, int item, unsigned lane){
+                const int byteIdx = c * bytes_per_cand + (item >> 2);
+                const int shift = (item & 3) * 2;
+                unsigned char mask = (unsigned char)(0x3u << shift);
+                cand[byteIdx] = (cand[byteIdx] & ~mask) | (unsigned char)((lane & 0x3u) << shift);
+            };
+            for (int c = 0; c < num_candidates; ++c) {
+                int approxCrew = 0;
+                for (int i = 0; i < num_items; ++i) {
+                    unsigned lane = bit(rng) ? 1u : 0u; // 50% choose
+                    // Heuristic: avoid obvious overfill when already near cap
+                    if (lane == 1u && approxCrew + (int)weights[i] > MAX_WORKERS_PER_VAN) lane = 0u;
+                    if (lane == 1u) approxCrew += (int)weights[i];
+                    set_lane(c, i, lane);
+                }
+            }
+
+            // Evaluate with Metal if available, else skip to CPU greedy
+            std::vector<float> obj(num_candidates, 0.0f), pen(num_candidates, 0.0f);
+            MetalEvalIn in{};
+            in.candidates = cand.data();
+            in.num_items = num_items;
+            in.num_candidates = num_candidates;
+            in.item_values = values.data();
+            in.item_weights = weights.data();
+            in.van_capacities = van_caps_arr;
+            in.num_vans = num_vans;
+            in.penalty_coeff = 1.0f;
+            MetalEvalOut out{ obj.data(), pen.data() };
+
+            bool used_metal = false;
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+            // If Metal was initialized earlier, this should succeed.
+            if (knapsack_metal_eval(&in, &out, nullptr, 0) == 0) {
+                used_metal = true;
+            }
+#endif
+
+            std::vector<int> trip;
+            int crew = 0;
+            if (used_metal) {
+                // Pick best candidate by (obj - pen)
+                int best = 0;
+                float bestScore = obj[0] - pen[0];
+                for (int c = 1; c < num_candidates; ++c) {
+                    float s = obj[c] - pen[c];
+                    if (s > bestScore) { bestScore = s; best = c; }
+                }
+                // Decode best candidate to trip indices
+                for (int i = 0; i < num_items; ++i) {
+                    const int byteIdx = best * bytes_per_cand + (i >> 2);
+                    const int shift = (i & 3) * 2;
+                    unsigned lane = (cand[byteIdx] >> shift) & 0x3u;
+                    if (lane == 1u) {
+                        trip.push_back(blockIdx[i]);
+                        crew += std::max(0, villages[blockIdx[i]].workers);
+                    }
+                }
+            } else {
+                // CPU fallback: simple greedy until capacity
+                for (int i = 0; i < num_items && crew < MAX_WORKERS_PER_VAN; ++i) {
+                    trip.push_back(blockIdx[i]);
+                    crew += std::max(0, villages[blockIdx[i]].workers);
+                }
+            }
+
+            if (trip.empty()) break;
+            for (int idx : trip) picked[idx] = 1;
+            trips.push_back(trip);
+            remaining -= crew;
+
+            // Advance cursor beyond picked
+            while (cursor < (int)villages.size() && picked[cursor]) cursor++;
         }
 
-        // CUDA memory allocation
-        float *d_lat, *d_lon;
-        int *d_weights;
-        cudaMalloc(&d_lat, N * sizeof(float));
-        cudaMalloc(&d_lon, N * sizeof(float));
-        cudaMalloc(&d_weights, N * sizeof(int));
+    // Try to initialize Metal on Apple Silicon; if available, we'll use it in later passes.
+    // This is a no-op on non-Apple builds.
+    extern int knapsack_metal_init_default();
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+    (void)knapsack_metal_init_default();
+#endif
 
-        cudaMemcpy(d_lat, h_lat, N * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_lon, h_lon, N * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_weights, h_weights, N * sizeof(int), cudaMemcpyHostToDevice);
-
-        // Call your actual solver
-        std::vector<VanTrip> trips = solveVanRoutes(villages, target_team_size);
-
-        // Convert to C struct
+    // Convert to C struct
         KnapsackSolution* solution = new KnapsackSolution;
-        solution->num_trips = trips.size();
+        solution->num_trips = (int)trips.size();
         solution->trips = new VanTripResult[trips.size()];
         solution->total_crew = 0;
         solution->total_fuel_cost = 0.0;
 
-        for (size_t i = 0; i < trips.size(); ++i) {
-            const auto& trip = trips[i];
-            
-            solution->trips[i].van_id = i + 1;
-            solution->trips[i].distance = trip.distance;
-            solution->trips[i].fuel_cost = trip.fuelCost;
-            solution->trips[i].crew_size = trip.crewSize;
-            
-            // Build village names string
+        for (size_t ti = 0; ti < trips.size(); ++ti) {
+            const auto& trip = trips[ti];
+
+            double distance = 0.0;
+            int crew = 0;
+            double prev_lat = GARAGE_LAT;
+            double prev_lon = GARAGE_LON;
+
             std::stringstream ss;
-            for (size_t j = 0; j < trip.villageIndices.size(); ++j) {
+            for (size_t j = 0; j < trip.size(); ++j) {
+                const auto& v = villages[trip[j]];
                 if (j > 0) ss << ",";
-                ss << villages[trip.villageIndices[j]].name;
+                ss << v.name;
+                distance += haversine(prev_lat, prev_lon, v.latitude, v.longitude);
+                prev_lat = v.latitude;
+                prev_lon = v.longitude;
+                crew += std::max(0, v.workers);
             }
-            std::string village_str = ss.str();
-            solution->trips[i].village_names = new char[village_str.length() + 1];
-            strcpy(solution->trips[i].village_names, village_str.c_str());
-            
-            solution->total_crew += trip.crewSize;
-            solution->total_fuel_cost += trip.fuelCost;
+            distance += haversine(prev_lat, prev_lon, FIELD_LAT, FIELD_LON);
+            distance += haversine(FIELD_LAT, FIELD_LON, GARAGE_LAT, GARAGE_LON);
+
+            solution->trips[ti].van_id = (int)ti + 1;
+            std::string names = ss.str();
+            solution->trips[ti].village_names = new char[names.size() + 1];
+            std::strcpy(solution->trips[ti].village_names, names.c_str());
+            solution->trips[ti].distance = distance;
+            solution->trips[ti].fuel_cost = distance * (GAS_PRICE_PER_LITER / KM_PER_LITER);
+            solution->trips[ti].crew_size = crew;
+
+            solution->total_crew += crew;
+            solution->total_fuel_cost += solution->trips[ti].fuel_cost;
         }
 
         solution->shortfall = std::max(0, target_team_size - solution->total_crew);
-
-        // Cleanup CUDA
-        cudaFree(d_lat);
-        cudaFree(d_lon);
-        cudaFree(d_weights);
-        delete[] h_lat;
-        delete[] h_lon;
-        delete[] h_weights;
-
         return solution;
-    }
-    catch (...) {
+    } catch (...) {
         return nullptr;
     }
 }
 
 void free_knapsack_solution(KnapsackSolution* solution) {
-    if (solution) {
-        if (solution->trips) {
-            for (int i = 0; i < solution->num_trips; ++i) {
-                delete[] solution->trips[i].village_names;
-            }
-            delete[] solution->trips;
+    if (!solution) return;
+    if (solution->trips) {
+        for (int i = 0; i < solution->num_trips; ++i) {
+            delete[] solution->trips[i].village_names;
         }
-        delete solution;
+        delete[] solution->trips;
     }
+    delete solution;
 }
 
 }

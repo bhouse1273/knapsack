@@ -1,9 +1,5 @@
 #include "InputModule.h"
-#include "RecursiveSolver.h"
-#include "Context.h"
-#include "VanRouteWriter.h"
 #include "RoutePlanner.h"
-#include <cuda_runtime.h>
 #include <iostream>
 #include <numeric>
 #include <cstdlib>
@@ -31,16 +27,6 @@ int main(int argc, char *argv[])
 
     int target_team_size = (argc > 1) ? std::atoi(argv[1]) : total_available_workers;
     std::cout << "🎯 Target team size: " << target_team_size << std::endl;
-
-    float *d_lat, *d_lon;
-    int *d_weights;
-    cudaMalloc(&d_lat, N * sizeof(float));
-    cudaMalloc(&d_lon, N * sizeof(float));
-    cudaMalloc(&d_weights, N * sizeof(int));
-
-    cudaMemcpy(d_lat, h_lat, N * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_lon, h_lon, N * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_weights, h_weights, N * sizeof(int), cudaMemcpyHostToDevice);
 
     // Main recursive trip planner
     std::vector<VanTrip> trips = solveVanRoutes(villages, target_team_size);
@@ -72,9 +58,6 @@ int main(int argc, char *argv[])
     std::cout << "⛽ Total fuel cost: $" << std::fixed << std::setprecision(2) << totalFuel << std::endl;
 
     // Clean up
-    cudaFree(d_lat);
-    cudaFree(d_lon);
-    cudaFree(d_weights);
     delete[] h_lat;
     delete[] h_lon;
     delete[] h_weights;

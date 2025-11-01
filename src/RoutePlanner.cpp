@@ -1,18 +1,12 @@
+#include "RoutePlanner.h"
 #include "InputModule.h"
 #include "Constants.h"
 #include "RecursiveSolver.h"
-#include <cuda_runtime.h>
+#include "RouteUtils.h"
 #include <fstream>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
-
-struct VanTrip {
-    std::vector<int> villageIndices;
-    int crewSize = 0;
-    double distance = 0.0;
-    double fuelCost = 0.0;
-};
 
 std::vector<VanTrip> solveVanRoutes(std::vector<Village>& villages, int targetTeamSize) {
     std::vector<VanTrip> trips;
@@ -47,31 +41,16 @@ std::vector<VanTrip> solveVanRoutes(std::vector<Village>& villages, int targetTe
             weights[i] = workersRemaining[blockIndices[i]];
         }
 
-        float* d_lat;
-        float* d_lon;
-        int* d_weights;
-        cudaMalloc(&d_lat, blockIndices.size() * sizeof(float));
-        cudaMalloc(&d_lon, blockIndices.size() * sizeof(float));
-        cudaMalloc(&d_weights, blockIndices.size() * sizeof(int));
-
-        cudaMemcpy(d_lat, lat.data(), blockIndices.size() * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_lon, lon.data(), blockIndices.size() * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_weights, weights.data(), blockIndices.size() * sizeof(int), cudaMemcpyHostToDevice);
-
         Context ctx;
         ctx.village_indices = blockIndices;
-        ctx.d_lat = d_lat;
-        ctx.d_lon = d_lon;
-        ctx.d_weights = d_weights;
+    ctx.d_lat = nullptr;     // CPU/Metal path: not used by recursive_worker
+    ctx.d_lon = nullptr;     // CPU/Metal path: not used by recursive_worker
+    ctx.d_weights = nullptr; // CPU/Metal path: not used by recursive_worker
         ctx.N = blockIndices.size();
         ctx.field_lat = FIELD_LAT;
         ctx.field_lon = FIELD_LON;
 
         auto plan = recursive_worker(ctx, 0, MAX_WORKERS_PER_VAN, villages);
-
-        cudaFree(d_lat);
-        cudaFree(d_lon);
-        cudaFree(d_weights);
 
         if (plan.empty()) {
             std::cout << "⚠️ No plan returned for van trip " << vanId << "\n";

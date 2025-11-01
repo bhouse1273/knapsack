@@ -1,56 +1,97 @@
-Awesome—here’s a ready-to-use dual-backend template (CUDA for Jetson, Metal for Apple Silicon) with a Makefile switch:
+## CUDA and Metal Compilation (actual project files)
 
-* [Download knapsack_dual_backend_template.zip](sandbox:/mnt/data/knapsack_dual_backend_template.zip)
+This guide shows how to build and run the knapsack solver using the real source tree:
 
-## What’s inside
+- macOS Apple Silicon: Metal backend (no external `metal` CLI needed; shader compiles at runtime)
+- Jetson/NVIDIA: CUDA backend
+- C library install for external consumers (e.g., Chariot)
+- Go binding (darwin/arm64)
 
-```
-include/backend.hpp                # Backend interface (shared)
-src/backend_factory.cpp            # Chooses CUDA or Metal via -D macro
-src/cuda_backend.cu                # CUDA backend (stubbed, drop in your kernel)
-src/metal_backend.mm               # Metal backend (Objective-C++ bridge, stubbed)
-shaders/eval_block_candidates.metal# Metal compute shader (placeholder)
-src/main.cpp                       # Tiny driver proving both backends link/run
-Makefile                           # 'make cuda' / 'make metal' / 'make all'
-build/                              (created by Make)
-```
+### Prerequisites
 
-## Build & run
+Common:
+- CMake 3.18+
+- C++17 toolchain
 
-### On Jetson (CUDA)
+macOS (Apple Silicon):
+- Xcode Command Line Tools (Apple Clang, Metal and Foundation frameworks)
 
-```bash
-make cuda        # produces build/knapsack_dual_cuda
-./build/knapsack_dual_cuda
-```
+Jetson/NVIDIA:
+- CUDA Toolkit 11.x+
+- Set `CMAKE_CUDA_ARCHITECTURES` if needed (defaults to 87 for Orin in other parts of this repo)
 
-* Set `CUDA_ARCH` if needed (defaults to `sm_87` for Orin; e.g., `make cuda CUDA_ARCH=sm_72` for Xavier).
+### Build on macOS (Apple Silicon, Metal backend)
 
-### On Apple Silicon (Metal)
+The project links an Objective‑C++ Metal bridge and compiles the Metal shader at runtime via the system framework (no external `metal` tool required).
 
 ```bash
-make metal       # produces build/knapsack_dual_metal + eval_block_candidates.metallib
-./build/knapsack_dual_metal
+# From repo root
+mkdir -p build && cd build
+cmake ..
+cmake --build . -j
+
+# Run (optional arg = target team size)
+./knapsack_solver 50
+
+# Output CSV will be written next to the binary
+ls van_routes.csv
 ```
 
-* Requires Xcode CLT. The Makefile uses `xcrun -sdk macosx metal/metallib` and links `-framework Metal -framework Foundation`.
+Notes:
+- Default input CSV is `data/villages.csv` (relative to repo root when run from `build/`).
+- If Metal initialization fails, the solver falls back to a CPU heuristic.
 
-### Build both (on a Mac with no CUDA installed, CUDA target will be skipped gracefully)
+### Build on Jetson/NVIDIA (CUDA backend)
 
 ```bash
-make all
+# From repo root
+mkdir -p build && cd build
+cmake ..
+cmake --build . -j
+./knapsack_solver 50
 ```
 
-## How to plug in your real evaluators
+Tips:
+- On non-Apple hosts, the top-level CMake enables CUDA and builds `.cu` kernels.
+- If your GPU architecture differs from Jetson Orin, pass `-DCMAKE_CUDA_ARCHITECTURES=<arch>` to `cmake ..`.
 
-* **CUDA**: Replace the placeholder in `src/cuda_backend.cu` with your kernel(s) and memory transfers. The interface accepts your SoA host view, candidate pack, terms/constraints, vans, etc., and fills `EvalOutHost`.
-* **Metal**: Port the core evaluation loop into `shaders/eval_block_candidates.metal` and extend `src/metal_backend.mm` to create MTLBuffers for your SoA arrays, candidate lanes, and outputs, then dispatch with a thread grid sized to your `N_candidates`.
+### Install the C library (for external apps)
 
-## Notes & tips
+The C API lives under `knapsack-library/` and exposes `solve_knapsack` and `free_knapsack_solution`.
 
-* Keep the **host interface identical** so the rest of your pipeline (NSQ/Chariot) doesn’t care which backend is used.
-* Use **bit-packed candidates** the same way on both backends to avoid format conversion.
-* For Apple Silicon, consider MPS (Metal Performance Shaders) if you later need reductions/scan primitives; for now, raw Metal compute is enough.
-* Determinism: seed your RNG once on the host and pass seeds into both backends to keep results comparable.
+```bash
+cd knapsack/knapsack-library
+mkdir -p build && cd build
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
+cmake --build . -j
+sudo cmake --install .
 
-If you want, I can flesh out the Metal buffers/dispatch code to match your current CUDA evaluator (with real inputs/outputs) next.
+# Verify
+ls /usr/local/include/knapsack_c.h
+ls /usr/local/lib/libknapsack.a
+```
+
+External apps (C/C++ or Go via cgo) can then use `-I/usr/local/include` and `-L/usr/local/lib -lknapsack`.
+
+### Go Metal binding (darwin/arm64)
+
+The Go binding evaluates candidates on Apple GPUs with in-process shader compilation.
+
+```bash
+cd bindings/go/metal
+go generate     # builds static lib and copies shader for embedding
+go test -v
+```
+
+If your editor reports cgo problems, ensure CGO is enabled and GOOS/GOARCH are `darwin/arm64`. This repo includes `.vscode/settings.json` to help.
+
+### Troubleshooting
+
+- macOS: “Metal init failed”
+	- Ensure Xcode Command Line Tools are installed; the shader is read from `kernels/metal/shaders/eval_block_candidates.metal` at runtime.
+- macOS: linker errors for C++/frameworks
+	- Make sure you link `-framework Metal -framework Foundation` and `-lc++` where relevant (already wired in CMake/Go binding).
+- Jetson: incorrect or missing CUDA arch
+	- Configure with `-DCMAKE_CUDA_ARCHITECTURES=<arch>`.
+- Go binding: editor shows Problems but tests pass
+	- Ensure CGO is enabled and environment matches `darwin/arm64`.

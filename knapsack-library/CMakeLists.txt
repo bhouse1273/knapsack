@@ -27,3 +27,13 @@ if(APPLE)
 	# Compile the Metal C API directly into the library to avoid a prebuilt static lib dependency.
 	target_sources(knapsack PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../kernels/metal/metal_api.mm)
 endif()
+
+# Install targets to allow system-wide consumption (e.g., /usr/local)
+include(GNUInstallDirs)
+install(TARGETS knapsack
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(FILES ${CMAKE_CURRENT_LIST_DIR}/include/knapsack_c.h
+	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)

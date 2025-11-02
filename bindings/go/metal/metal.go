@@ -37,6 +37,7 @@ type EvalIn struct {
 	VanCaps       *float32
 	NumVans       int32
 	PenaltyCoeff  float32
+	PenaltyPower  float32
 }
 
 // EvalOut mirrors the C struct MetalEvalOut.

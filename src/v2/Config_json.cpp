@@ -1,0 +1,146 @@
+// Copyright (c) 2025
+// SPDX-License-Identifier: MIT
+
+#include "v2/Config.h"
+
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#include "third_party/picojson/picojson.h"
+
+namespace v2 {
+
+static bool get_string(const picojson::object& o, const char* key, std::string* out) {
+  auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<std::string>()) return false; *out = it->second.get<std::string>(); return true;
+}
+static bool get_int(const picojson::object& o, const char* key, int* out) {
+  auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<double>()) return false; *out = (int)it->second.get<double>(); return true;
+}
+static bool get_uint64(const picojson::object& o, const char* key, std::uint64_t* out) {
+  auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<double>()) return false; double v = it->second.get<double>(); if (v < 0) return false; *out = (std::uint64_t)v; return true;
+}
+static bool get_array(const picojson::object& o, const char* key, picojson::array* out) {
+  auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<picojson::array>()) return false; *out = it->second.get<picojson::array>(); return true;
+}
+static bool get_object(const picojson::object& o, const char* key, picojson::object* out) {
+  auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<picojson::object>()) return false; *out = it->second.get<picojson::object>(); return true;
+}
+
+static bool parse_items(const picojson::object& root, ItemsSpec* items, std::string* err) {
+  picojson::object itemsObj; if (!get_object(root, "items", &itemsObj)) { if (err) *err = "missing 'items'"; return false; }
+  if (!get_int(itemsObj, "count", &items->count)) { if (err) *err = "items.count missing or invalid"; return false; }
+  picojson::object attrs; if (!get_object(itemsObj, "attributes", &attrs)) { if (err) *err = "items.attributes missing"; return false; }
+  for (const auto& kv : attrs) {
+    if (!kv.second.is<picojson::array>()) { if (err) *err = "attribute '" + kv.first + "' not an array"; return false; }
+    const auto& arr = kv.second.get<picojson::array>();
+    std::vector<double> vec; vec.reserve(arr.size());
+    for (const auto& e : arr) { if (!e.is<double>()) { if (err) *err = "attribute '" + kv.first + "' contains non-numeric"; return false; } vec.push_back(e.get<double>()); }
+    items->attributes[kv.first] = std::move(vec);
+  }
+  return true;
+}
+
+static bool parse_blocks(const picojson::object& root, std::vector<BlockSpec>* blocks, std::string* err) {
+  picojson::array arr; if (!get_array(root, "blocks", &arr)) { if (err) *err = "missing 'blocks'"; return false; }
+  blocks->clear(); blocks->reserve(arr.size());
+  for (const auto& e : arr) {
+    if (!e.is<picojson::object>()) { if (err) *err = "block entry not an object"; return false; }
+    const auto& bo = e.get<picojson::object>();
+    BlockSpec bs; bs.name = "";
+    (void)get_string(bo, "name", &bs.name);
+    int start = -1, count = 0; (void)get_int(bo, "start", &start); (void)get_int(bo, "count", &count);
+    bs.start = start; bs.count = count; bs.indices.clear();
+    auto it = bo.find("indices");
+    if (it != bo.end() && it->second.is<picojson::array>()) {
+      const auto& idx = it->second.get<picojson::array>();
+      bs.indices.reserve(idx.size());
+      for (const auto& v : idx) { if (!v.is<double>()) { if (err) *err = "block indices contain non-numeric"; return false; } bs.indices.push_back((int)v.get<double>()); }
+    }
+    blocks->push_back(std::move(bs));
+  }
+  return true;
+}
+
+static bool parse_objective(const picojson::object& root, std::vector<CostTermSpec>* objective, std::string* err) {
+  picojson::array arr; if (!get_array(root, "objective", &arr)) { if (err) *err = "missing 'objective'"; return false; }
+  objective->clear(); objective->reserve(arr.size());
+  for (const auto& e : arr) {
+    if (!e.is<picojson::object>()) { if (err) *err = "objective entry not an object"; return false; }
+    const auto& oo = e.get<picojson::object>();
+    CostTermSpec ct; if (!get_string(oo, "attr", &ct.attr)) { if (err) *err = "objective.attr missing"; return false; }
+    auto it = oo.find("weight"); ct.weight = (it != oo.end() && it->second.is<double>()) ? it->second.get<double>() : 1.0;
+    objective->push_back(std::move(ct));
+  }
+  return true;
+}
+
+static bool parse_constraints(const picojson::object& root, std::vector<ConstraintSpec>* constraints, std::string* err) {
+  constraints->clear();
+  auto it = root.find("constraints"); if (it == root.end()) return true; if (!it->second.is<picojson::array>()) return true;
+  const auto& arr = it->second.get<picojson::array>();
+  constraints->reserve(arr.size());
+  for (const auto& e : arr) {
+    if (!e.is<picojson::object>()) { if (err) *err = "constraint entry not an object"; return false; }
+    const auto& co = e.get<picojson::object>();
+    ConstraintSpec cs;
+    (void)get_string(co, "kind", &cs.kind);
+    (void)get_string(co, "attr", &cs.attr);
+    auto il = co.find("limit"); if (il != co.end() && il->second.is<double>()) cs.limit = il->second.get<double>();
+    auto is = co.find("soft"); if (is != co.end()) cs.soft = is->second.is<bool>() ? is->second.get<bool>() : (is->second.is<double>() ? (is->second.get<double>() != 0.0) : false);
+    auto ip = co.find("penalty");
+    if (ip != co.end() && ip->second.is<picojson::object>()) {
+      const auto& po = ip->second.get<picojson::object>();
+      auto iw = po.find("weight"); if (iw != po.end() && iw->second.is<double>()) cs.penalty.weight = iw->second.get<double>();
+      auto ipow = po.find("power"); if (ipow != po.end() && ipow->second.is<double>()) cs.penalty.power = ipow->second.get<double>();
+    }
+    constraints->push_back(std::move(cs));
+  }
+  return true;
+}
+
+static bool parse_knapsack(const picojson::object& root, KnapsackSpec* ks, std::string* err) {
+  picojson::object k; if (!get_object(root, "knapsack", &k)) { if (err) *err = "missing 'knapsack'"; return false; }
+  (void)get_int(k, "K", &ks->K);
+  auto icaps = k.find("capacities"); if (icaps != k.end() && icaps->second.is<picojson::array>()) {
+    const auto& arr = icaps->second.get<picojson::array>();
+    ks->capacities.resize(arr.size()); for (size_t i = 0; i < arr.size(); ++i) ks->capacities[i] = arr[i].is<double>() ? arr[i].get<double>() : 0.0;
+  }
+  (void)get_string(k, "capacity_attr", &ks->capacity_attr);
+  return true;
+}
+
+static bool parse_root(const picojson::object& root, Config* out, std::string* err) {
+  Config cfg;
+  int version = 2; (void)get_int(root, "version", &version); cfg.version = version;
+  std::string mode; if (get_string(root, "mode", &mode)) cfg.mode = mode; else cfg.mode = "assign";
+  std::uint64_t seed = 0; (void)get_uint64(root, "random_seed", &seed); cfg.random_seed = seed;
+
+  if (!parse_items(root, &cfg.items, err)) return false;
+  if (!parse_blocks(root, &cfg.blocks, err)) return false;
+  if (!parse_objective(root, &cfg.objective, err)) return false;
+  if (!parse_constraints(root, &cfg.constraints, err)) return false;
+  if (cfg.mode == "assign") { if (!parse_knapsack(root, &cfg.knapsack, err)) return false; }
+
+  if (!ValidateConfig(cfg, err)) return false;
+  *out = std::move(cfg);
+  return true;
+}
+
+bool LoadConfigFromJsonString(const std::string& json, Config* out, std::string* err) {
+  if (!out) { if (err) *err = "out is null"; return false; }
+  picojson::value v; std::string perr = picojson::parse(v, json);
+  if (!perr.empty()) { if (err) *err = perr; return false; }
+  if (!v.is<picojson::object>()) { if (err) *err = "invalid JSON root"; return false; }
+  return parse_root(v.get<picojson::object>(), out, err);
+}
+
+bool LoadConfigFromFile(const std::string& path, Config* out, std::string* err) {
+  if (!out) { if (err) *err = "out is null"; return false; }
+  std::ifstream in(path);
+  if (!in) { if (err) *err = "failed to read file"; return false; }
+  std::ostringstream ss; ss << in.rdbuf();
+  return LoadConfigFromJsonString(ss.str(), out, err);
+}
+
+} // namespace v2

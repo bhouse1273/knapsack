@@ -89,6 +89,7 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             in.van_capacities = van_caps_arr;
             in.num_vans = num_vans;
             in.penalty_coeff = 1.0f;
+            in.penalty_power = 1.0f;
             MetalEvalOut out{ obj.data(), pen.data() };
 
             bool used_metal = false;

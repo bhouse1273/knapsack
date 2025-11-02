@@ -22,6 +22,9 @@ struct Uniforms {
   uint32_t bytes_per_candidate;
   uint32_t num_vans;
   float    penalty_coeff;
+  float    penalty_power;
+  uint32_t num_obj_terms;
+  uint32_t num_soft_constraints;
 };
 } // namespace
 
@@ -101,14 +104,14 @@ int knapsack_metal_eval(const MetalEvalIn* in, MetalEvalOut* out, char* errbuf, 
     id<MTLBuffer> penBuf  = [gDevice newBufferWithLength:sizeof(float)*num_cands options:MTLResourceStorageModeShared];
     if (!candBuf || !objBuf || !penBuf) { setErr(errbuf, errlen, @"Failed to create buffers"); return -5; }
 
-    [enc setBuffer:candBuf offset:0 atIndex:0];
-    [enc setBuffer:objBuf  offset:0 atIndex:1];
-    [enc setBuffer:penBuf  offset:0 atIndex:2];
+  [enc setBuffer:candBuf offset:0 atIndex:0];
+  [enc setBuffer:objBuf  offset:0 atIndex:1];
+  [enc setBuffer:penBuf  offset:0 atIndex:2];
     // Optional attribute buffers (values, weights, van caps)
     id<MTLBuffer> valBuf = nil;
     id<MTLBuffer> wgtBuf = nil;
     id<MTLBuffer> capBuf = nil;
-    if (in->item_values && num_items > 0) {
+    if (in->item_values && num_items > 0 && (!in->obj_attrs || in->num_obj_terms <= 0)) {
       valBuf = [gDevice newBufferWithBytes:in->item_values length:sizeof(float)*num_items options:MTLResourceStorageModeShared];
       [enc setBuffer:valBuf offset:0 atIndex:3];
     }
@@ -121,7 +124,31 @@ int knapsack_metal_eval(const MetalEvalIn* in, MetalEvalOut* out, char* errbuf, 
       [enc setBuffer:capBuf offset:0 atIndex:5];
     }
 
-    Uniforms U{num_items, num_cands, bytes_per_cand, (uint32_t)in->num_vans, in->penalty_coeff};
+    // New: multi-term objective
+    id<MTLBuffer> objAttrBuf = nil, objWBuf = nil;
+    if (in->obj_attrs && in->obj_weights && in->num_obj_terms > 0 && num_items > 0) {
+      const size_t objAttrCount = (size_t)in->num_obj_terms * (size_t)num_items;
+      objAttrBuf = [gDevice newBufferWithBytes:in->obj_attrs length:sizeof(float)*objAttrCount options:MTLResourceStorageModeShared];
+      objWBuf    = [gDevice newBufferWithBytes:in->obj_weights length:sizeof(float)*in->num_obj_terms options:MTLResourceStorageModeShared];
+      [enc setBuffer:objAttrBuf offset:0 atIndex:6];
+      [enc setBuffer:objWBuf    offset:0 atIndex:7];
+    }
+
+    // New: global soft constraints
+    id<MTLBuffer> consAttrBuf = nil, consLimBuf = nil, consWBuf = nil, consPBuf = nil;
+    if (in->cons_attrs && in->cons_limits && in->cons_weights && in->cons_powers && in->num_soft_constraints > 0 && num_items > 0) {
+      const size_t consAttrCount = (size_t)in->num_soft_constraints * (size_t)num_items;
+      consAttrBuf = [gDevice newBufferWithBytes:in->cons_attrs length:sizeof(float)*consAttrCount options:MTLResourceStorageModeShared];
+      consLimBuf  = [gDevice newBufferWithBytes:in->cons_limits length:sizeof(float)*in->num_soft_constraints options:MTLResourceStorageModeShared];
+      consWBuf    = [gDevice newBufferWithBytes:in->cons_weights length:sizeof(float)*in->num_soft_constraints options:MTLResourceStorageModeShared];
+      consPBuf    = [gDevice newBufferWithBytes:in->cons_powers  length:sizeof(float)*in->num_soft_constraints options:MTLResourceStorageModeShared];
+      [enc setBuffer:consAttrBuf offset:0 atIndex:8];
+      [enc setBuffer:consLimBuf  offset:0 atIndex:9];
+      [enc setBuffer:consWBuf    offset:0 atIndex:10];
+      [enc setBuffer:consPBuf    offset:0 atIndex:11];
+    }
+
+  Uniforms U{num_items, num_cands, bytes_per_cand, (uint32_t)in->num_vans, in->penalty_coeff, in->penalty_power, (uint32_t) (in->obj_attrs && in->num_obj_terms>0 ? in->num_obj_terms : 0), (uint32_t) (in->cons_attrs && in->num_soft_constraints>0 ? in->num_soft_constraints : 0)};
     [enc setBytes:&U length:sizeof(U) atIndex:15];
 
     MTLSize grid = MTLSizeMake((NSUInteger)num_cands, 1, 1);

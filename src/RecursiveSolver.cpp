@@ -208,7 +208,8 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
             /*item_weights*/ weights.data(),
             /*van_capacities*/ caps.data(),
             /*num_vans*/ 1,
-            /*penalty_coeff*/ 100.0f
+            /*penalty_coeff*/ 100.0f,
+            /*penalty_power*/ 1.0f
         };
         MetalEvalOut out{ obj.data(), pen.data() };
         char err[256] = {0};

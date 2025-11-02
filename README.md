@@ -79,6 +79,35 @@ Tips:
 - The top-level `CMakeLists.txt` detects Apple vs non-Apple. On non-Apple hosts it enables CUDA and builds `.cu` kernels.
 - If your GPU architecture differs from Jetson Orin (8.7), set `-DCMAKE_CUDA_ARCHITECTURES=<arch>` when configuring CMake.
 
+## V2 solver (JSON configs)
+
+V2 is a generic, block-aware solver with multi-term objectives and multiple soft capacity constraints. A small CLI is installed as `knapsack_v2_cli`.
+
+Quick start:
+
+```bash
+# From repo root
+mkdir -p build-lib && cd build-lib
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
+cmake --build . -j
+# Optional: install system-wide (requires sudo if /usr/local)
+sudo cmake --install .
+
+# Run against an example config
+./knapsack_v2_cli ../docs/v2/example_select.json
+
+# With options (beam and debug)
+cat > /tmp/opts.json <<'JSON'
+{ "beam_width": 32, "iters": 5, "seed": 42, "debug": true }
+JSON
+./knapsack_v2_cli ../docs/v2/example_select.json /tmp/opts.json
+```
+
+Notes:
+- Debug mode prints per-iteration best totals with constraint slacks and per-constraint penalty parts.
+- The C API is available via `knapsack-library/include/knapsack_c.h` with `solve_knapsack_v2_from_json`.
+- On macOS, the library uses Metal at runtime and falls back to CPU if Metal is unavailable.
+
 ## Go Metal Binding (darwin/arm64)
 
 A Go package provides in-process access to the Metal evaluator for Apple Silicon.

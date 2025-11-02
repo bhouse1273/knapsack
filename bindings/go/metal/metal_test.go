@@ -38,6 +38,7 @@ func TestEvaluate_Smoke(t *testing.T) {
 		VanCaps:       &caps[0],
 		NumVans:       1,
 		PenaltyCoeff:  1.0,
+		PenaltyPower:  1.0,
 	}
 	out := EvalOut{
 		Obj:         &obj[0],

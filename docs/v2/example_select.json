@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "mode": "select",
+  "random_seed": 1,
+  "items": {
+    "count": 6,
+    "attributes": {
+      "value":  [10, 12, 7, 5, 8, 6],
+      "weight": [ 8, 10, 5, 4, 7, 6]
+    }
+  },
+  "blocks": [
+    { "name": "all", "start": 0, "count": 6 }
+  ],
+  "objective": [
+    { "attr": "value", "weight": 1.0 }
+  ],
+  "constraints": [
+    { "kind": "capacity", "attr": "weight", "limit": 15, "soft": true, "penalty": { "weight": 10.0, "power": 2.0 } }
+  ]
+}

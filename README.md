@@ -216,6 +216,22 @@ PYTHONPATH=$PWD:$PYTHONPATH python3 ../bindings/python/example.py
 
 See [`bindings/python/README.md`](bindings/python/README.md) for complete API documentation and examples.
 
+**Comprehensive Examples:**
+
+The [`examples/`](examples/) directory contains extensive real-world examples:
+- `01_basic_knapsack.py` - Classic problems and edge cases
+- `02_debt_portfolio.py` - Debt collection optimization
+- `03_investment_portfolio.py` - Financial portfolio allocation
+- `04_pandas_integration.py` - CSV data and DataFrame workflows
+- `05_visualization.py` - Plotting and analysis (coming soon)
+- `06_scout_mode.py` - Exact solver integration (coming soon)
+
+Run any example:
+```bash
+cd examples/python
+PYTHONPATH=../../build:$PYTHONPATH python3 01_basic_knapsack.py
+```
+
 ## Go bindings (V2)
 
 The V2 C API is wrapped for Go via cgo. Platform wrappers expose a consistent Go entry point:

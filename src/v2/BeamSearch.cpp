@@ -6,8 +6,10 @@
 #include "v2/Preprocess.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -345,6 +347,67 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     out->best_select = beam[best];
   }
   out->objective = obj[best]; out->penalty = pen[best]; out->total = obj[best] - pen[best];
+  return true;
+}
+
+// Scout mode: beam search with active set tracking for exact solver handoff
+bool SolveBeamScout(const Config& cfg, const HostSoA& soa, const SolverOptions& opt,
+                    ScoutResult* out, std::string* err) {
+  if (!out) { if (err) *err = "out is null"; return false; }
+  
+  auto start = std::chrono::high_resolution_clock::now();
+  
+  // Run standard beam search with dominance filters
+  BeamResult beam_result;
+  SolverOptions beam_opt = opt;
+  beam_opt.enable_dominance_filter = true; // Always enable for scout mode
+  
+  if (!SolveBeamSelect(cfg, soa, beam_opt, &beam_result, err)) {
+    return false;
+  }
+  
+  // Copy beam result to scout result
+  out->best_select = beam_result.best_select;
+  out->objective = beam_result.objective;
+  out->penalty = beam_result.penalty;
+  out->total = beam_result.total;
+  out->original_item_count = soa.count;
+  
+  // Track active items across top-K beam candidates
+  // For now, we'll track items that appear in the best solution
+  // In a full implementation, we'd track across all beam iterations
+  const int N = soa.count;
+  std::vector<int> item_count(N, 0);
+  
+  // Count how many times each item was selected in the best solution
+  for (int i = 0; i < N; ++i) {
+    if (out->best_select[i]) {
+      item_count[i] = 1;
+    }
+  }
+  
+  // Build active set based on threshold
+  out->item_frequency.resize(N);
+  for (int i = 0; i < N; ++i) {
+    out->item_frequency[i] = (double)item_count[i];
+    if (out->item_frequency[i] >= opt.scout_threshold) {
+      out->active_items.push_back(i);
+    }
+  }
+  
+  out->active_item_count = (int)out->active_items.size();
+  
+  auto end = std::chrono::high_resolution_clock::now();
+  out->solve_time_ms = std::chrono::duration<double, std::milli>(end - start).count();
+  
+  if (opt.debug) {
+    std::cout << "[scout] original=" << out->original_item_count 
+              << " active=" << out->active_item_count
+              << " reduction=" << std::fixed << std::setprecision(1)
+              << (100.0 * (1.0 - (double)out->active_item_count / (double)out->original_item_count)) << "%"
+              << " time=" << out->solve_time_ms << "ms\n";
+  }
+  
   return true;
 }
 

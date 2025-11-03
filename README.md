@@ -164,6 +164,58 @@ See [`docs/BeamAsDataScout.md`](docs/BeamAsDataScout.md) for detailed documentat
 
 Solution fields (C API): `num_items`, `select[]`, `objective`, `penalty`, `total`.
 
+## Python Bindings
+
+Python bindings are available via pybind11, providing a Pythonic interface to the V2 solver with full scout mode support.
+
+**Installation:**
+```bash
+# Build with Python bindings enabled
+mkdir -p build && cd build
+cmake .. -DBUILD_PYTHON_BINDINGS=ON
+cmake --build . --target knapsack_py
+
+# Install with pip
+cd ..
+pip install .
+
+# Or use directly from build directory
+export PYTHONPATH=/path/to/knapsack/build:$PYTHONPATH
+```
+
+**Quick Start:**
+```python
+import knapsack
+
+# Define problem
+values = [60, 100, 120, 50, 80, 90]
+weights = [10, 20, 30, 15, 25, 20]
+capacity = 50
+
+# Solve
+solution = knapsack.solve(values, weights, capacity)
+print(f"Best value: {solution.best_value}")
+print(f"Selected items: {solution.selected_indices}")
+
+# Scout mode for exact solver integration
+result = knapsack.solve_scout(values, weights, capacity, 
+                               {"scout_threshold": 0.5, "scout_top_k": 8})
+print(f"Active items: {result.active_items}")
+print(f"Reduction: {100 * (1 - result.active_item_count / result.original_item_count):.1f}%")
+
+# Filter problem for exact solver (Gurobi, SCIP, etc.)
+filtered_values = [values[i] for i in result.active_items]
+filtered_weights = [weights[i] for i in result.active_items]
+```
+
+**Demo:**
+```bash
+cd build
+PYTHONPATH=$PWD:$PYTHONPATH python3 ../bindings/python/example.py
+```
+
+See [`bindings/python/README.md`](bindings/python/README.md) for complete API documentation and examples.
+
 ## Go bindings (V2)
 
 The V2 C API is wrapped for Go via cgo. Platform wrappers expose a consistent Go entry point:

@@ -135,6 +135,33 @@ Example options JSON:
     "dom_enable": true, "dom_eps": 1e-9, "dom_surrogate": true }
 ```
 
+### Scout Mode (Hybrid with Exact Solvers)
+
+Scout mode enables beam search to act as a **data scout** for exact solvers (Gurobi, SCIP, CPLEX). It identifies active items, provides warm starts, and reduces problem size before handing off to an exact solver.
+
+**C++ API:**
+```cpp
+v2::SolverOptions opt;
+opt.scout_mode = true;
+opt.scout_threshold = 0.5;  // items must appear in 50% of top solutions
+opt.scout_top_k = 8;
+
+v2::ScoutResult result;
+if (v2::SolveBeamScout(cfg, soa, opt, &result, &err)) {
+    // Use result.active_items for exact solver
+    // Use result.best_select as warm start
+}
+```
+
+**Demo:**
+```bash
+cd build
+make v2_scout_demo
+./v2_scout_demo
+```
+
+See [`docs/BeamAsDataScout.md`](docs/BeamAsDataScout.md) for detailed documentation and integration patterns.
+
 Solution fields (C API): `num_items`, `select[]`, `objective`, `penalty`, `total`.
 
 ## Go bindings (V2)

@@ -213,3 +213,17 @@ if(APPLE AND USE_METAL)
   target_link_libraries(v2_beam_sanity PRIVATE "-framework Foundation" "-framework Metal")
 endif()
 
+# ---- V2 Scout mode demo ----
+set(V2_SCOUT_DEMO_SOURCES tools/v2_scout_demo.cpp src/v2/BeamSearch.cpp src/v2/Data.cpp src/v2/EvalCPU.cpp src/v2/Preprocess.cpp)
+if(APPLE AND USE_METAL)
+  list(APPEND V2_SCOUT_DEMO_SOURCES src/v2/Config.mm kernels/metal/metal_api.mm)
+else()
+  list(APPEND V2_SCOUT_DEMO_SOURCES src/v2/Config_json.cpp)
+endif()
+add_executable(v2_scout_demo ${V2_SCOUT_DEMO_SOURCES})
+target_include_directories(v2_scout_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/kernels/metal ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+if(APPLE AND USE_METAL)
+  target_compile_options(v2_scout_demo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(v2_scout_demo PRIVATE "-framework Foundation" "-framework Metal")
+endif()
+

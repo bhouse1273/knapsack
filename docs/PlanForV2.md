@@ -31,7 +31,7 @@ Awesome—here’s a concrete upgrade path to turn your Jetson knapsack into a *
 
 # 3) Multi-knapsack & assignment mode
 
-**Goal:** Handle vans/routes/teams as knapsacks.
+**Goal:** Handle groups/routes/teams as knapsacks.
 
 * Add decision variable mode: **select** (0/1), **assign** (one item → one of K knapsacks).
 * Represent knapsack k with its own constraint set (`constraints[scope=knapsack, k]`).
@@ -79,7 +79,7 @@ struct SolverEngine { Solution solve(const Instance&); };
   ```cpp
   struct ContextUpdater { __device__ uint64_t next(uint64_t ctx, const BlockDecision&) const; };
   ```
-* This lets penalties/capacities depend on history (e.g., remaining workers, last village distance, productivity bias).
+* This lets penalties/capacities depend on history (e.g., remaining units, last pickup distance, productivity bias).
 
 # 8) Stochastic & robust variants (optional but future-proof)
 
@@ -107,7 +107,7 @@ struct SolverEngine { Solution solve(const Instance&); };
 
 # 12) Observability & testability
 
-* **DEBUG_VAN-style logs** generalized: per-block top-K candidates, constraint slacks, penalty breakdown.
+* **DEBUG_GROUP-style logs** generalized: per-block top-K candidates, constraint slacks, penalty breakdown.
 * **Metrics**: time/iteration, best cost, violations, bound gap, occupancy/SM utilization (tegrastats).
 * **Property tests**: (a) feasibility under all constraints, (b) monotonicity of penalties, (c) reproducibility.
 * **Scenario harness**: fixed seeds + golden solutions for CI.
@@ -163,6 +163,6 @@ class BeamSearchLNS final : public SolverEngine {
 
 If you want, I can draft:
 
-* A **YAML template** for your current villages/van use case (with target-team soft constraint),
+* A **YAML template** for a generic group/item use case (with target-team soft constraint),
 * A **CUDA kernel skeleton** for evaluating `N_candidates × N_items_block`,
 * Or a **Chariot snippet** that emits the JSON config and cost composition.

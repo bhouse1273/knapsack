@@ -12,8 +12,8 @@ typedef struct {
   // Evaluator attributes
   const float* item_values;   // len = num_items
   const float* item_weights;  // len = num_items
-  const float* van_capacities;// len = num_vans
-  int num_vans;
+  const float* group_capacities;// len = num_groups
+  int num_groups;
   float penalty_coeff;        // soft penalty weight
   float penalty_power;        // soft penalty exponent (e.g., 1=linear, 2=quadratic)
   // New: multi-term objectives

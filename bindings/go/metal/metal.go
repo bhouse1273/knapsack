@@ -34,8 +34,8 @@ type EvalIn struct {
 	NumCandidates int32
 	ItemValues    *float32
 	ItemWeights   *float32
-	VanCaps       *float32
-	NumVans       int32
+	GroupCaps     *float32
+	NumGroups     int32
 	PenaltyCoeff  float32
 	PenaltyPower  float32
 }
@@ -98,24 +98,24 @@ func Evaluate(in EvalIn, out EvalOut) error {
 		defer C.free(wgtsCPtr)
 		C.memcpy(wgtsCPtr, unsafe.Pointer(in.ItemWeights), C.size_t(int(in.NumItems)*4))
 	}
-	if in.NumVans > 0 && in.VanCaps != nil {
-		capsCPtr = C.malloc(C.size_t(int(in.NumVans) * 4))
+	if in.NumGroups > 0 && in.GroupCaps != nil {
+		capsCPtr = C.malloc(C.size_t(int(in.NumGroups) * 4))
 		if capsCPtr == nil {
-			return errors.New("malloc failed for van caps")
+			return errors.New("malloc failed for group caps")
 		}
 		defer C.free(capsCPtr)
-		C.memcpy(capsCPtr, unsafe.Pointer(in.VanCaps), C.size_t(int(in.NumVans)*4))
+		C.memcpy(capsCPtr, unsafe.Pointer(in.GroupCaps), C.size_t(int(in.NumGroups)*4))
 	}
 
 	cin := C.MetalEvalIn{
-		candidates:     (*C.uchar)(candCPtr),
-		num_items:      C.int(in.NumItems),
-		num_candidates: C.int(in.NumCandidates),
-		item_values:    (*C.float)(valsCPtr),
-		item_weights:   (*C.float)(wgtsCPtr),
-		van_capacities: (*C.float)(capsCPtr),
-		num_vans:       C.int(in.NumVans),
-		penalty_coeff:  C.float(in.PenaltyCoeff),
+		candidates:       (*C.uchar)(candCPtr),
+		num_items:        C.int(in.NumItems),
+		num_candidates:   C.int(in.NumCandidates),
+		item_values:      (*C.float)(valsCPtr),
+		item_weights:     (*C.float)(wgtsCPtr),
+		group_capacities: (*C.float)(capsCPtr),
+		num_groups:       C.int(in.NumGroups),
+		penalty_coeff:    C.float(in.PenaltyCoeff),
 	}
 	// Allocate C buffers for outputs and copy back after the call to avoid passing Go pointers to C.
 	n := int(in.NumCandidates)

@@ -45,7 +45,7 @@ void ensure_metal_ready() {
 #endif
 }
 
-// Pack candidates (2-bit lanes per item). lane: 0=unselected; 1=van0
+// Pack candidates (2-bit lanes per item). lane: 0=unselected; 1=group0
 std::vector<unsigned char> pack2bit(const std::vector<std::vector<unsigned char>>& cand_bits, int num_items) {
     const int bytes_per = (num_items + 3) / 4; // 4 items per byte (2 bits each)
     std::vector<unsigned char> out;
@@ -73,7 +73,7 @@ int argmax_score(const std::vector<float>& obj, const std::vector<float>& pen) {
 }
 }
 
-std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, const std::vector<Village>& villages) {
+std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, const std::vector<Entity>& entities) {
     if (ctx.N == 0 || depth >= MAX_RECURSION_DEPTH) {
 #ifdef DEBUG_VAN
         std::cout << "⚠️ Empty or max-depth block encountered at depth " << depth << ". Returning no plan.\n";
@@ -82,15 +82,15 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
     }
 
 #ifdef DEBUG_VAN
-    std::cout << "🧠 Classical block: " << ctx.N << " villages in scope\n";
+    std::cout << "🧠 Classical block: " << ctx.N << " entities in scope\n";
     for (int i = 0; i < ctx.N; ++i) {
-        int globalIdx = ctx.village_indices[i];
-        const auto& v = villages[globalIdx];
+        int globalIdx = ctx.item_indices[i];
+        const auto& v = entities[globalIdx];
         double d = haversine(GARAGE_LAT, GARAGE_LON, v.latitude, v.longitude);
-        int w = std::max(1, v.workers);
-        int s = std::max(1, v.productivityScore);
+        int w = std::max(1, v.resourceUnits);
+        int s = std::max(1, v.priority);
         double cost = std::sqrt(d) / std::pow(w * s, 0.75);
-        std::cout << "📍 Village: " << v.name
+        std::cout << "📍 Entity: " << v.name
                   << ", d=" << std::fixed << std::setprecision(2) << d
                   << ", w=" << w
                   << ", s=" << s
@@ -110,10 +110,10 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
     std::vector<Item> items;
     items.reserve(ctx.N);
     for (int i = 0; i < ctx.N; ++i) {
-        int globalIdx = ctx.village_indices[i];
-        const auto& v = villages[globalIdx];
-        int w = std::max(1, v.workers);
-        int s = std::max(1, v.productivityScore);
+        int globalIdx = ctx.item_indices[i];
+        const auto& v = entities[globalIdx];
+        int w = std::max(1, v.resourceUnits);
+        int s = std::max(1, v.priority);
         double d = haversine(GARAGE_LAT, GARAGE_LON, v.latitude, v.longitude);
         double cost = std::sqrt(d) / std::pow(static_cast<double>(w) * s, 0.75);
         items.push_back({i, globalIdx, w, s, cost});
@@ -146,15 +146,15 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
         // helper to clamp by capacity (optional)
         auto clamp_capacity = [&](std::vector<unsigned char>& bits){
             int sum = 0;
-            for (int i = 0; i < N; ++i) if (bits[i]) sum += std::max(1, villages[ctx.village_indices[i]].workers);
+            for (int i = 0; i < N; ++i) if (bits[i]) sum += std::max(1, entities[ctx.item_indices[i]].resourceUnits);
             if (sum <= target_team_size) return;
             // drop lowest value/weight until within capacity
             std::vector<std::pair<double,int>> score_idx;
             score_idx.reserve(N);
             for (int i = 0; i < N; ++i) if (bits[i]) {
-                const auto& v = villages[ctx.village_indices[i]];
-                double value = std::max(1, v.workers) * std::max(1, v.productivityScore);
-                double key = value / std::max(1, v.workers);
+                const auto& v = entities[ctx.item_indices[i]];
+                double value = std::max(1, v.resourceUnits) * std::max(1, v.priority);
+                double key = value / std::max(1, v.resourceUnits);
                 score_idx.emplace_back(key, i);
             }
             std::sort(score_idx.begin(), score_idx.end()); // remove lowest value density first
@@ -162,7 +162,7 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
                 if (sum <= target_team_size) break;
                 int i = kv.second;
                 bits[i] = 0;
-                sum -= std::max(1, villages[ctx.village_indices[i]].workers);
+                sum -= std::max(1, entities[ctx.item_indices[i]].resourceUnits);
             }
         };
 
@@ -189,11 +189,11 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
         }
 
         // Prepare evaluator inputs
-        std::vector<float> values(N, 0.f), weights(N, 0.f), caps(1, static_cast<float>(target_team_size));
+    std::vector<float> values(N, 0.f), weights(N, 0.f), caps(1, static_cast<float>(target_team_size));
         for (int i = 0; i < N; ++i) {
-            const auto& v = villages[ctx.village_indices[i]];
-            weights[i] = static_cast<float>(std::max(1, v.workers));
-            values[i] = weights[i] * static_cast<float>(std::max(1, v.productivityScore));
+            const auto& v = entities[ctx.item_indices[i]];
+            weights[i] = static_cast<float>(std::max(1, v.resourceUnits));
+            values[i] = weights[i] * static_cast<float>(std::max(1, v.priority));
         }
 
         const auto packed = pack2bit(cand_bits, N);
@@ -206,8 +206,8 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
             /*num_candidates*/ num_cand,
             /*item_values*/ values.data(),
             /*item_weights*/ weights.data(),
-            /*van_capacities*/ caps.data(),
-            /*num_vans*/ 1,
+            /*group_capacities*/ caps.data(),
+            /*num_groups*/ 1,
             /*penalty_coeff*/ 100.0f,
             /*penalty_power*/ 1.0f
         };

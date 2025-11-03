@@ -20,7 +20,7 @@ struct Uniforms {
   uint32_t num_items;
   uint32_t num_candidates;
   uint32_t bytes_per_candidate;
-  uint32_t num_vans;
+  uint32_t num_groups;
   float    penalty_coeff;
   float    penalty_power;
   uint32_t num_obj_terms;
@@ -107,7 +107,7 @@ int knapsack_metal_eval(const MetalEvalIn* in, MetalEvalOut* out, char* errbuf, 
   [enc setBuffer:candBuf offset:0 atIndex:0];
   [enc setBuffer:objBuf  offset:0 atIndex:1];
   [enc setBuffer:penBuf  offset:0 atIndex:2];
-    // Optional attribute buffers (values, weights, van caps)
+  // Optional attribute buffers (values, weights, group caps)
     id<MTLBuffer> valBuf = nil;
     id<MTLBuffer> wgtBuf = nil;
     id<MTLBuffer> capBuf = nil;
@@ -119,8 +119,8 @@ int knapsack_metal_eval(const MetalEvalIn* in, MetalEvalOut* out, char* errbuf, 
       wgtBuf = [gDevice newBufferWithBytes:in->item_weights length:sizeof(float)*num_items options:MTLResourceStorageModeShared];
       [enc setBuffer:wgtBuf offset:0 atIndex:4];
     }
-    if (in->van_capacities && in->num_vans > 0) {
-      capBuf = [gDevice newBufferWithBytes:in->van_capacities length:sizeof(float)*in->num_vans options:MTLResourceStorageModeShared];
+    if (in->group_capacities && in->num_groups > 0) {
+      capBuf = [gDevice newBufferWithBytes:in->group_capacities length:sizeof(float)*in->num_groups options:MTLResourceStorageModeShared];
       [enc setBuffer:capBuf offset:0 atIndex:5];
     }
 
@@ -148,7 +148,7 @@ int knapsack_metal_eval(const MetalEvalIn* in, MetalEvalOut* out, char* errbuf, 
       [enc setBuffer:consPBuf    offset:0 atIndex:11];
     }
 
-  Uniforms U{num_items, num_cands, bytes_per_cand, (uint32_t)in->num_vans, in->penalty_coeff, in->penalty_power, (uint32_t) (in->obj_attrs && in->num_obj_terms>0 ? in->num_obj_terms : 0), (uint32_t) (in->cons_attrs && in->num_soft_constraints>0 ? in->num_soft_constraints : 0)};
+  Uniforms U{num_items, num_cands, bytes_per_cand, (uint32_t)in->num_groups, in->penalty_coeff, in->penalty_power, (uint32_t) (in->obj_attrs && in->num_obj_terms>0 ? in->num_obj_terms : 0), (uint32_t) (in->cons_attrs && in->num_soft_constraints>0 ? in->num_soft_constraints : 0)};
     [enc setBytes:&U length:sizeof(U) atIndex:15];
 
     MTLSize grid = MTLSizeMake((NSUInteger)num_cands, 1, 1);

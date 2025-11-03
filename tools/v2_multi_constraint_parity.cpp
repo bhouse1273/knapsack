@@ -87,8 +87,8 @@ int main() {
   in.candidates = packed.data();
   in.num_items = N;
   in.num_candidates = 1;
-  // legacy fields left null (no per-van penalty, no single-term objective)
-  in.num_vans = 0; in.penalty_coeff = 0.0f; in.penalty_power = 1.0f;
+  // legacy fields left null (no per-group penalty, no single-term objective)
+  in.num_groups = 0; in.penalty_coeff = 0.0f; in.penalty_power = 1.0f;
   // multi-term objective
   in.obj_attrs = obj_attrs.data();
   in.obj_weights = obj_weights.data();

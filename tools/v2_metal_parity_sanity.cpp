@@ -60,7 +60,7 @@ int main() {
     packed[byteIdx] = (packed[byteIdx] & ~mask) | (unsigned char)((lane & 0x3u) << shift);
   }
 
-  // Objective attr = value, capacity attr = weight; num_vans=1 with limit from the first capacity constraint.
+  // Objective attr = value, capacity attr = weight; num_groups=1 with limit from the first capacity constraint.
   std::vector<float> values(N, 0.0f), weights(N, 0.0f), caps(1, 0.0f);
   for (int i = 0; i < N; ++i) {
     values[i] = (float)soa.attr.at("value")[i];
@@ -83,8 +83,8 @@ int main() {
   in.num_candidates = 1;
   in.item_values = values.data();
   in.item_weights = weights.data();
-  in.van_capacities = caps.data();
-  in.num_vans = 1;
+  in.group_capacities = caps.data();
+  in.num_groups = 1;
   in.penalty_coeff = (float)pen_w;
   in.penalty_power = (float)pen_p;
   MetalEvalOut out{ obj.data(), pen.data() };

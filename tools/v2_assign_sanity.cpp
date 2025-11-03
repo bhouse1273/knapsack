@@ -30,10 +30,10 @@ int main() {
   v2::HostSoA soa; if (!v2::BuildHostSoA(cfg, &soa, &err)) return fail(err);
   if (cfg.mode != "assign" || cfg.knapsack.K != 2) return fail("unexpected config; need K=2 assign mode");
 
-  // Candidate: assign items 0,1 -> van 0; 3,4 -> van 1; item 2 unassigned
+  // Candidate: assign items 0,1 -> group 0; 3,4 -> group 1; item 2 unassigned
   v2::CandidateAssign cand; cand.assign.assign(soa.count, -1);
-  cand.assign[0] = 0; cand.assign[1] = 0; // van 0
-  cand.assign[3] = 1; cand.assign[4] = 1; // van 1
+  cand.assign[0] = 0; cand.assign[1] = 0; // group 0
+  cand.assign[3] = 1; cand.assign[4] = 1; // group 1
 
   v2::EvalResult cpu;
   if (!v2::EvaluateCPU_Assign(cfg, soa, cand, &cpu, &err)) return fail(err);
@@ -55,7 +55,7 @@ int main() {
   std::vector<unsigned char> packed(bytes_per, 0);
   for (int i = 0; i < N; ++i) {
     unsigned lane = 0u;
-    if (cand.assign[i] >= 0) lane = (unsigned)(cand.assign[i] + 1); // lane=van+1
+  if (cand.assign[i] >= 0) lane = (unsigned)(cand.assign[i] + 1); // lane=group+1
     const int byteIdx = (i >> 2);
     const int shift = (i & 3) * 2;
     unsigned char mask = (unsigned char)(0x3u << shift);
@@ -75,8 +75,8 @@ int main() {
   in.num_candidates = 1;
   in.item_values = values.data();
   in.item_weights = weights.data();
-  in.van_capacities = caps.data();
-  in.num_vans = cfg.knapsack.K;
+  in.group_capacities = caps.data();
+  in.num_groups = cfg.knapsack.K;
   in.penalty_coeff = 1.0f;
   in.penalty_power = 1.0f;
   MetalEvalOut out{ obj.data(), pen.data() };

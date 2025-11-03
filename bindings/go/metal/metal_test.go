@@ -11,7 +11,7 @@ func TestEvaluate_Smoke(t *testing.T) {
 	numCands := 4
 	bytesPerCand := (numItems + 3) / 4 // 2 bits per item
 
-	// Build candidates: assign every item to van 0 (lane=1) => byte pattern 0b01010101 = 0x55
+	// Build candidates: assign every item to group 0 (lane=1) => byte pattern 0b01010101 = 0x55
 	cand := make([]byte, bytesPerCand*numCands)
 	for c := 0; c < numCands; c++ {
 		for b := 0; b < bytesPerCand; b++ {
@@ -21,7 +21,7 @@ func TestEvaluate_Smoke(t *testing.T) {
 	obj := make([]float32, numCands)
 	pen := make([]float32, numCands)
 
-	// Simple attributes: value=1 per item, weight=0 so no penalties. One van with large cap.
+	// Simple attributes: value=1 per item, weight=0 so no penalties. One group with large cap.
 	values := make([]float32, numItems)
 	weights := make([]float32, numItems)
 	for i := range values {
@@ -35,8 +35,8 @@ func TestEvaluate_Smoke(t *testing.T) {
 		NumCandidates: int32(numCands),
 		ItemValues:    &values[0],
 		ItemWeights:   &weights[0],
-		VanCaps:       &caps[0],
-		NumVans:       1,
+		GroupCaps:     &caps[0],
+		NumGroups:     1,
 		PenaltyCoeff:  1.0,
 		PenaltyPower:  1.0,
 	}

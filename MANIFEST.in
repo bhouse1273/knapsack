@@ -1,0 +1,27 @@
+# Include documentation
+include README.md
+include LICENSE
+recursive-include docs *.md
+recursive-include bindings/python *.md
+
+# Include headers needed for compilation
+recursive-include include *.h *.hpp
+
+# Include source files
+recursive-include src *.cpp *.mm
+recursive-include kernels *.metal *.mm *.cu
+
+# Include CMake files
+include CMakeLists.txt
+recursive-include knapsack-library CMakeLists.txt
+
+# Include third-party
+recursive-include third_party/pybind11 *
+graft third_party/pybind11
+
+# Exclude build artifacts
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+prune build
+prune build-lib

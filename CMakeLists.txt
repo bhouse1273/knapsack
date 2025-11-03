@@ -227,3 +227,46 @@ if(APPLE AND USE_METAL)
   target_link_libraries(v2_scout_demo PRIVATE "-framework Foundation" "-framework Metal")
 endif()
 
+# ---- Python bindings ----
+option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)
+
+if(BUILD_PYTHON_BINDINGS)
+  # Add pybind11 subdirectory
+  add_subdirectory(third_party/pybind11)
+  
+  # Collect sources for the Python module (same as BeamSearch needs)
+  set(PY_BINDING_SOURCES 
+    bindings/python/knapsack_py.cpp
+    src/v2/BeamSearch.cpp
+    src/v2/Data.cpp
+    src/v2/EvalCPU.cpp
+    src/v2/Preprocess.cpp
+  )
+  
+  if(APPLE AND USE_METAL)
+    list(APPEND PY_BINDING_SOURCES src/v2/Config.mm kernels/metal/metal_api.mm)
+  else()
+    list(APPEND PY_BINDING_SOURCES src/v2/Config_json.cpp)
+  endif()
+  
+  # Create the Python extension module (named knapsack_py to avoid conflict)
+  pybind11_add_module(knapsack_py ${PY_BINDING_SOURCES})
+  
+  target_include_directories(knapsack_py PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include 
+    ${CMAKE_CURRENT_SOURCE_DIR}/kernels/metal 
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+  )
+  
+  if(APPLE AND USE_METAL)
+    target_compile_options(knapsack_py PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_link_libraries(knapsack_py PRIVATE "-framework Foundation" "-framework Metal")
+  endif()
+  
+  # Set the output name to 'knapsack' (Python will import as 'knapsack')
+  set_target_properties(knapsack_py PROPERTIES OUTPUT_NAME "knapsack")
+  
+  # Install the Python module to a location pip can find
+  install(TARGETS knapsack_py LIBRARY DESTINATION .)
+endif()
+

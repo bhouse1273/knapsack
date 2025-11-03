@@ -7,7 +7,7 @@ struct Uniforms {
   unsigned int num_items;
   unsigned int num_candidates;
   unsigned int bytes_per_candidate;
-  unsigned int num_vans;
+  unsigned int num_groups;
   float penalty_coeff;
   float penalty_power;
   unsigned int num_obj_terms;
@@ -20,7 +20,7 @@ __global__ void eval_block_candidates_cuda(
   float* __restrict__ pen_out,
   const float* __restrict__ item_values,
   const float* __restrict__ item_weights,
-  const float* __restrict__ van_caps,
+  const float* __restrict__ group_caps,
   const float* __restrict__ obj_attrs,
   const float* __restrict__ obj_weights,
   const float* __restrict__ cons_attrs,
@@ -35,10 +35,10 @@ __global__ void eval_block_candidates_cuda(
   float obj = 0.0f;
   float pen = 0.0f;
 
-  const unsigned int MaxVans = 8u;
-  float loads[MaxVans];
+  const unsigned int MaxGroups = 8u;
+  float loads[MaxGroups];
   #pragma unroll
-  for (unsigned int v = 0; v < MaxVans; ++v) loads[v] = 0.0f;
+  for (unsigned int g = 0; g < MaxGroups; ++g) loads[g] = 0.0f;
 
   const unsigned int base = tid * U.bytes_per_candidate;
   for (unsigned int i = 0; i < U.num_items; ++i) {
@@ -53,17 +53,17 @@ __global__ void eval_block_candidates_cuda(
     } else {
       obj += (item_values ? item_values[i] : 0.0f);
     }
-    const unsigned int van = lane - 1u;
-    if (van < U.num_vans && van < MaxVans) {
-      loads[van] += (item_weights ? item_weights[i] : 0.0f);
+    const unsigned int group = lane - 1u;
+    if (group < U.num_groups && group < MaxGroups) {
+      loads[group] += (item_weights ? item_weights[i] : 0.0f);
     }
   }
 
-  // Per-van soft penalties (legacy)
-  if (U.penalty_coeff != 0.0f && van_caps && U.num_vans > 0u) {
-    const unsigned int n = (U.num_vans > MaxVans) ? MaxVans : U.num_vans;
-    for (unsigned int v = 0; v < n; ++v) {
-      const float over = loads[v] - van_caps[v];
+  // Per-group soft penalties (legacy assign-mode capacity)
+  if (U.penalty_coeff != 0.0f && group_caps && U.num_groups > 0u) {
+    const unsigned int n = (U.num_groups > MaxGroups) ? MaxGroups : U.num_groups;
+    for (unsigned int g = 0; g < n; ++g) {
+      const float over = loads[g] - group_caps[g];
       if (over > 0.0f) pen += powf(over, U.penalty_power) * U.penalty_coeff;
     }
   }
@@ -101,7 +101,7 @@ int knapsack_cuda_eval(const CudaEvalIn* in, CudaEvalOut* out, char* errbuf, int
   const size_t candBytes = (size_t)bytes_per_cand * (size_t)num_cands;
 
   unsigned char* d_cand = nullptr; float* d_obj = nullptr; float* d_pen = nullptr;
-  float *d_item_values = nullptr, *d_item_weights = nullptr, *d_van_caps = nullptr;
+  float *d_item_values = nullptr, *d_item_weights = nullptr, *d_group_caps = nullptr;
   float *d_obj_attrs = nullptr, *d_obj_weights = nullptr;
   float *d_cons_attrs = nullptr, *d_cons_limits = nullptr, *d_cons_weights = nullptr, *d_cons_powers = nullptr;
 
@@ -113,7 +113,7 @@ int knapsack_cuda_eval(const CudaEvalIn* in, CudaEvalOut* out, char* errbuf, int
 
   if (in->item_values && num_items > 0) { cudaMalloc(&d_item_values, sizeof(float)*num_items); cudaMemcpy(d_item_values, in->item_values, sizeof(float)*num_items, cudaMemcpyHostToDevice); }
   if (in->item_weights && num_items > 0) { cudaMalloc(&d_item_weights, sizeof(float)*num_items); cudaMemcpy(d_item_weights, in->item_weights, sizeof(float)*num_items, cudaMemcpyHostToDevice); }
-  if (in->van_capacities && in->num_vans > 0) { cudaMalloc(&d_van_caps, sizeof(float)*in->num_vans); cudaMemcpy(d_van_caps, in->van_capacities, sizeof(float)*in->num_vans, cudaMemcpyHostToDevice); }
+  if (in->group_capacities && in->num_groups > 0) { cudaMalloc(&d_group_caps, sizeof(float)*in->num_groups); cudaMemcpy(d_group_caps, in->group_capacities, sizeof(float)*in->num_groups, cudaMemcpyHostToDevice); }
 
   if (in->obj_attrs && in->obj_weights && in->num_obj_terms > 0) {
     size_t objAttrCount = (size_t)in->num_obj_terms * (size_t)num_items;
@@ -136,12 +136,12 @@ int knapsack_cuda_eval(const CudaEvalIn* in, CudaEvalOut* out, char* errbuf, int
   }
 
   Uniforms U; U.num_items = num_items; U.num_candidates = num_cands; U.bytes_per_candidate = bytes_per_cand;
-  U.num_vans = (unsigned int)in->num_vans; U.penalty_coeff = in->penalty_coeff; U.penalty_power = in->penalty_power;
+  U.num_groups = (unsigned int)in->num_groups; U.penalty_coeff = in->penalty_coeff; U.penalty_power = in->penalty_power;
   U.num_obj_terms = (unsigned int)((in->obj_attrs && in->num_obj_terms>0) ? in->num_obj_terms : 0);
   U.num_soft_constraints = (unsigned int)((in->cons_attrs && in->num_soft_constraints>0) ? in->num_soft_constraints : 0);
 
   dim3 block(128); dim3 grid((num_cands + block.x - 1) / block.x);
-  eval_block_candidates_cuda<<<grid, block>>>(d_cand, d_obj, d_pen, d_item_values, d_item_weights, d_van_caps,
+  eval_block_candidates_cuda<<<grid, block>>>(d_cand, d_obj, d_pen, d_item_values, d_item_weights, d_group_caps,
                                               d_obj_attrs, d_obj_weights,
                                               d_cons_attrs, d_cons_limits, d_cons_weights, d_cons_powers, U);
   if ((st = cudaDeviceSynchronize()) != cudaSuccess) { setErr(errbuf, errlen, "kernel failed"); return -5; }
@@ -152,7 +152,7 @@ int knapsack_cuda_eval(const CudaEvalIn* in, CudaEvalOut* out, char* errbuf, int
   cudaFree(d_cand); cudaFree(d_obj); cudaFree(d_pen);
   if (d_item_values) cudaFree(d_item_values);
   if (d_item_weights) cudaFree(d_item_weights);
-  if (d_van_caps) cudaFree(d_van_caps);
+  if (d_group_caps) cudaFree(d_group_caps);
   if (d_obj_attrs) cudaFree(d_obj_attrs);
   if (d_obj_weights) cudaFree(d_obj_weights);
   if (d_cons_attrs) cudaFree(d_cons_attrs);

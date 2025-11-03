@@ -3,7 +3,7 @@
 
 // Shared context for recursive knapsack layers
 struct Context {
-    std::vector<int> village_indices;
+    std::vector<int> item_indices;
     float* d_lat;
     float* d_lon;
     int* d_weights;

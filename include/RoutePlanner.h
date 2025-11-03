@@ -3,14 +3,8 @@
 #include <string>
 #include "InputModule.h"
 #include "Constants.h"
-
-// Public struct describing a single van trip (exposed to callers)
-struct VanTrip {
-	std::vector<int> villageIndices; // indices into the "villages" vector
-	int crewSize = 0;
-	double distance = 0.0;
-	double fuelCost = 0.0;
-};
+#include "ResultWriter.h" // for GroupResult
 
 // Forward-declared in header and implemented in RoutePlanner.cpp
-std::vector<VanTrip> solveVanRoutes(std::vector<Village>& villages, int targetTeamSize);
+// Returns neutral GroupResult entries instead of domain-specific trips.
+std::vector<GroupResult> solveGroups(std::vector<Entity>& entities, int targetGroupSize);

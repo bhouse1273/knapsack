@@ -264,8 +264,8 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
       else { in.item_values = fvals.data(); }
       // Soft constraints
       if (C > 0) { in.cons_attrs = consAttrFlat.data(); in.cons_limits = consLimits.data(); in.cons_weights = consW.data(); in.cons_powers = consP.data(); in.num_soft_constraints = C; }
-      // Legacy per-van capacity penalty for single knapsack selection
-      in.item_weights = fw.data(); in.van_capacities = caps.data(); in.num_vans = 1; in.penalty_coeff = (float)penW; in.penalty_power = (float)penP;
+  // Legacy per-group capacity penalty for single knapsack selection
+  in.item_weights = fw.data(); in.group_capacities = caps.data(); in.num_groups = 1; in.penalty_coeff = (float)penW; in.penalty_power = (float)penP;
       MetalEvalOut out{ obj.data(), pen.data() };
       (void)bytes_per; // silence unused
       if (knapsack_metal_eval(&in, &out, nullptr, 0) != 0) {
@@ -328,7 +328,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     MetalEvalIn in{}; in.candidates = packed.data(); in.num_items = N; in.num_candidates = (int)beam.size();
     if (T > 0) { in.obj_attrs = objAttrFlat.data(); in.obj_weights = objW.data(); in.num_obj_terms = T; } else { in.item_values = fvals.data(); }
     if (C > 0) { in.cons_attrs = consAttrFlat.data(); in.cons_limits = consLimits.data(); in.cons_weights = consW.data(); in.cons_powers = consP.data(); in.num_soft_constraints = C; }
-    in.item_weights = fw.data(); in.van_capacities = caps.data(); in.num_vans = 1; in.penalty_coeff = (float)penW; in.penalty_power = (float)penP; MetalEvalOut out{ obj.data(), pen.data() };
+  in.item_weights = fw.data(); in.group_capacities = caps.data(); in.num_groups = 1; in.penalty_coeff = (float)penW; in.penalty_power = (float)penP; MetalEvalOut out{ obj.data(), pen.data() };
     if (knapsack_metal_eval(&in, &out, nullptr, 0) != 0) { useMetalFinal = false; }
   }
   if (!useMetalFinal) {

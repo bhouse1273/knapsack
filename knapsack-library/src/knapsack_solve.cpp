@@ -18,34 +18,34 @@
 
 extern "C" {
 
-// Minimal CPU fallback: greedy accumulate villages into trips until target is met.
+// Minimal CPU fallback: greedy accumulate entities into trips until target is met.
 KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
     try {
         if (!csv_path) return nullptr;
-        std::vector<Village> villages = load_villages_from_csv(csv_path);
-        if (villages.empty()) return nullptr;
+        std::vector<Entity> entities = load_entities_from_csv(csv_path);
+        if (entities.empty()) return nullptr;
 
-        // Greedy: visit villages in file order, batch into trips until target is met.
-        int remaining = std::max(0, target_team_size);
-        std::vector<int> picked(villages.size(), 0);
+        // Greedy: visit items in file order, batch into trips until target is met.
+    int remaining = std::max(0, target_team_size);
+    std::vector<int> picked(entities.size(), 0);
 
         std::vector<std::vector<int>> trips;
-        int cursor = 0;
+    int cursor = 0;
 
-        // Simple RNG for candidate generation
+        // Minimal CPU fallback: greedy accumulate items into groups until target is met.
         std::mt19937 rng(12345);
         std::uniform_int_distribution<int> bit(0, 1);
 
-        while (remaining > 0 && cursor < (int)villages.size()) {
-            // Form a block of up to 15 unpicked villages (similar to RoutePlanner)
+        while (remaining > 0 && cursor < (int)entities.size()) {
+            // Form a block of up to 15 unpicked entities (similar to RoutePlanner)
             std::vector<int> blockIdx;
-            for (int i = cursor; i < (int)villages.size() && (int)blockIdx.size() < 15; ++i) {
-                if (!picked[i] && villages[i].workers > 0) blockIdx.push_back(i);
+            for (int i = cursor; i < (int)entities.size() && (int)blockIdx.size() < 15; ++i) {
+                if (!picked[i] && entities[i].resourceUnits > 0) blockIdx.push_back(i);
             }
             if (blockIdx.empty()) break;
 
             const int num_items = (int)blockIdx.size();
-            const int num_vans = 1; // one van per trip
+            const int num_groups = 1; // one group per trip
             const int num_candidates = 64;
             const int bytes_per_cand = (num_items + 3) / 4; // 2 bits per item
 
@@ -53,13 +53,13 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             std::vector<float> values(num_items, 1.0f);
             std::vector<float> weights(num_items, 0.0f);
             for (int i = 0; i < num_items; ++i) {
-                const auto& v = villages[blockIdx[i]];
-                values[i] = std::max(1, v.productivityScore);
-                weights[i] = std::max(0, v.workers);
+                const auto& v = entities[blockIdx[i]];
+                values[i] = std::max(1, v.priority);
+                weights[i] = std::max(0, v.resourceUnits);
             }
-            float van_caps_arr[1] = { (float)MAX_WORKERS_PER_VAN };
+            float group_caps_arr[1] = { (float)MAX_UNITS_PER_GROUP };
 
-            // Generate random candidates; lane 1 means assign to van 0, lane 0 unassigned
+            // Generate random candidates; lane 1 means assign to group 0, lane 0 unassigned
             std::vector<unsigned char> cand(num_candidates * bytes_per_cand, 0);
             auto set_lane = [&](int c, int item, unsigned lane){
                 const int byteIdx = c * bytes_per_cand + (item >> 2);
@@ -72,7 +72,7 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
                 for (int i = 0; i < num_items; ++i) {
                     unsigned lane = bit(rng) ? 1u : 0u; // 50% choose
                     // Heuristic: avoid obvious overfill when already near cap
-                    if (lane == 1u && approxCrew + (int)weights[i] > MAX_WORKERS_PER_VAN) lane = 0u;
+                    if (lane == 1u && approxCrew + (int)weights[i] > MAX_UNITS_PER_GROUP) lane = 0u;
                     if (lane == 1u) approxCrew += (int)weights[i];
                     set_lane(c, i, lane);
                 }
@@ -86,8 +86,8 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             in.num_candidates = num_candidates;
             in.item_values = values.data();
             in.item_weights = weights.data();
-            in.van_capacities = van_caps_arr;
-            in.num_vans = num_vans;
+            in.group_capacities = group_caps_arr;
+            in.num_groups = num_groups;
             in.penalty_coeff = 1.0f;
             in.penalty_power = 1.0f;
             MetalEvalOut out{ obj.data(), pen.data() };
@@ -117,14 +117,14 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
                     unsigned lane = (cand[byteIdx] >> shift) & 0x3u;
                     if (lane == 1u) {
                         trip.push_back(blockIdx[i]);
-                        crew += std::max(0, villages[blockIdx[i]].workers);
+                        crew += std::max(0, entities[blockIdx[i]].resourceUnits);
                     }
                 }
             } else {
                 // CPU fallback: simple greedy until capacity
-                for (int i = 0; i < num_items && crew < MAX_WORKERS_PER_VAN; ++i) {
+                for (int i = 0; i < num_items && crew < MAX_UNITS_PER_GROUP; ++i) {
                     trip.push_back(blockIdx[i]);
-                    crew += std::max(0, villages[blockIdx[i]].workers);
+                    crew += std::max(0, entities[blockIdx[i]].resourceUnits);
                 }
             }
 
@@ -134,7 +134,7 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             remaining -= crew;
 
             // Advance cursor beyond picked
-            while (cursor < (int)villages.size() && picked[cursor]) cursor++;
+            while (cursor < (int)entities.size() && picked[cursor]) cursor++;
         }
 
     // Try to initialize Metal on Apple Silicon; if available, we'll use it in later passes.
@@ -147,9 +147,9 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
     // Convert to C struct
         KnapsackSolution* solution = new KnapsackSolution;
         solution->num_trips = (int)trips.size();
-        solution->trips = new VanTripResult[trips.size()];
-        solution->total_crew = 0;
-        solution->total_fuel_cost = 0.0;
+        solution->trips = new GroupTrip[trips.size()];
+        solution->total_units = 0;
+        solution->total_cost = 0.0;
 
         for (size_t ti = 0; ti < trips.size(); ++ti) {
             const auto& trip = trips[ti];
@@ -161,30 +161,30 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
 
             std::stringstream ss;
             for (size_t j = 0; j < trip.size(); ++j) {
-                const auto& v = villages[trip[j]];
+                const auto& v = entities[trip[j]];
                 if (j > 0) ss << ",";
                 ss << v.name;
                 distance += haversine(prev_lat, prev_lon, v.latitude, v.longitude);
                 prev_lat = v.latitude;
                 prev_lon = v.longitude;
-                crew += std::max(0, v.workers);
+                crew += std::max(0, v.resourceUnits);
             }
             distance += haversine(prev_lat, prev_lon, FIELD_LAT, FIELD_LON);
             distance += haversine(FIELD_LAT, FIELD_LON, GARAGE_LAT, GARAGE_LON);
 
-            solution->trips[ti].van_id = (int)ti + 1;
+            solution->trips[ti].group_id = (int)ti + 1;
             std::string names = ss.str();
-            solution->trips[ti].village_names = new char[names.size() + 1];
-            std::strcpy(solution->trips[ti].village_names, names.c_str());
+            solution->trips[ti].item_names = new char[names.size() + 1];
+            std::strcpy(solution->trips[ti].item_names, names.c_str());
             solution->trips[ti].distance = distance;
-            solution->trips[ti].fuel_cost = distance * (GAS_PRICE_PER_LITER / KM_PER_LITER);
-            solution->trips[ti].crew_size = crew;
+            solution->trips[ti].cost = distance * (GAS_PRICE_PER_LITER / KM_PER_LITER);
+            solution->trips[ti].units = crew;
 
-            solution->total_crew += crew;
-            solution->total_fuel_cost += solution->trips[ti].fuel_cost;
+            solution->total_units += crew;
+            solution->total_cost += solution->trips[ti].cost;
         }
 
-        solution->shortfall = std::max(0, target_team_size - solution->total_crew);
+        solution->shortfall = std::max(0, target_team_size - solution->total_units);
         return solution;
     } catch (...) {
         return nullptr;
@@ -195,7 +195,7 @@ void free_knapsack_solution(KnapsackSolution* solution) {
     if (!solution) return;
     if (solution->trips) {
         for (int i = 0; i < solution->num_trips; ++i) {
-            delete[] solution->trips[i].village_names;
+            delete[] solution->trips[i].item_names;
         }
         delete[] solution->trips;
     }

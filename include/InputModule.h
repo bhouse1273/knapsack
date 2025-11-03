@@ -2,12 +2,14 @@
 #include <string>
 #include <vector>
 
-struct Village {
-    std::string name;
-    float latitude;
-    float longitude;
-    int workers;
-    int productivityScore = 1;  // 1 (entry-level) to 4 (superstar)
+// Generic entity record for classical CSV demos (kept minimal and neutral).
+struct Entity {
+    std::string name;     // identifier/label
+    float latitude;       // optional geo latitude (degrees)
+    float longitude;      // optional geo longitude (degrees)
+    int resourceUnits;    // generic resource count (e.g., workers, slots)
+    int priority = 1;     // generic priority/grade (1..N)
 };
 
-std::vector<Village> load_villages_from_csv(const std::string& filename);
+// Generic CSV loader for entities (preferred going forward).
+std::vector<Entity> load_entities_from_csv(const std::string& filename);

@@ -16,4 +16,4 @@ This is a minimal preview of the V2 config used to drive a general, block-aware,
 - objective: list of terms { attr, weight }
 - constraints: list of { kind, attr, limit, soft, penalty { weight, power } }
 
-See `example_villages.json` for a concrete instance.
+See `example_assign.json` for a concrete instance.

@@ -54,7 +54,7 @@ int main() {
   for (int j = 0; j < C; ++j) { const auto& c = cfg.constraints[cons_idx[j]]; cons_limits[j] = (float)c.limit; cons_weights[j] = (float)c.penalty.weight; cons_powers[j] = (float)c.penalty.power; const auto& a = soa.attr.at(c.attr); for (int i = 0; i < N; ++i) cons_attrs[j * N + i] = (float)a[i]; }
 
   std::vector<float> obj(1, 0.0f), pen(1, 0.0f);
-  CudaEvalIn in{}; in.candidates = packed.data(); in.num_items = N; in.num_candidates = 1; in.num_vans = 0; in.penalty_coeff = 0.0f; in.penalty_power = 1.0f; in.obj_attrs = obj_attrs.data(); in.obj_weights = obj_weights.data(); in.num_obj_terms = T; in.cons_attrs = cons_attrs.data(); in.cons_limits = cons_limits.data(); in.cons_weights = cons_weights.data(); in.cons_powers = cons_powers.data(); in.num_soft_constraints = C;
+  CudaEvalIn in{}; in.candidates = packed.data(); in.num_items = N; in.num_candidates = 1; in.num_groups = 0; in.penalty_coeff = 0.0f; in.penalty_power = 1.0f; in.obj_attrs = obj_attrs.data(); in.obj_weights = obj_weights.data(); in.num_obj_terms = T; in.cons_attrs = cons_attrs.data(); in.cons_limits = cons_limits.data(); in.cons_weights = cons_weights.data(); in.cons_powers = cons_powers.data(); in.num_soft_constraints = C;
   CudaEvalOut out{ obj.data(), pen.data() };
   char ebuf[512] = {0};
   if (knapsack_cuda_eval(&in, &out, ebuf, sizeof(ebuf)) != 0) return fail(std::string("CUDA eval: ")+ebuf);

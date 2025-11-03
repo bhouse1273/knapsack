@@ -6,19 +6,19 @@ extern "C" {
 #endif
 
 typedef struct {
-    int van_id;
-    char* village_names;  // comma-separated
+    int group_id;
+    char* item_names;  // comma-separated
     double distance;
-    double fuel_cost;
-    int crew_size;
-} VanTripResult;
+    double cost;
+    int units;
+} GroupTrip;
 
 typedef struct {
-    VanTripResult* trips;
+    GroupTrip* trips;
     int num_trips;
-    int total_crew;
+    int total_units;
     int shortfall;
-    double total_fuel_cost;
+    double total_cost;
 } KnapsackSolution;
 
 // Main solver function

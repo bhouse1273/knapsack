@@ -3,7 +3,7 @@
 #include "v2/Config.h"
 
 int main(int argc, char** argv) {
-  std::string path = argc > 1 ? argv[1] : std::string("docs/v2/example_villages.json");
+  std::string path = argc > 1 ? argv[1] : std::string("docs/v2/example_assign.json");
   v2::Config cfg; std::string err;
   if (!v2::LoadConfigFromFile(path, &cfg, &err)) {
     std::cerr << "Failed to load config: " << err << "\n";

@@ -8,32 +8,34 @@
 
 int main(int argc, char *argv[])
 {
-    auto villages = load_villages_from_csv("../data/villages.csv");
-    std::cout << "Loaded villages: " << villages.size() << std::endl;
-    int N = villages.size();
+    auto entities = load_entities_from_csv("../data/villages_50.csv");
+    std::cout << "Loaded entities: " << entities.size() << std::endl;
+    int N = entities.size();
 
     float *h_lat = new float[N];
     float *h_lon = new float[N];
     int *h_weights = new int[N];
 
-    int total_available_workers = 0;
+    int total_available_units = 0;
     for (int i = 0; i < N; ++i)
     {
-        h_lat[i] = villages[i].latitude;
-        h_lon[i] = villages[i].longitude;
-        h_weights[i] = villages[i].workers;
-        total_available_workers += villages[i].workers;
+        h_lat[i] = entities[i].latitude;
+        h_lon[i] = entities[i].longitude;
+        h_weights[i] = entities[i].resourceUnits;
+        total_available_units += entities[i].resourceUnits;
     }
 
-    int target_team_size = (argc > 1) ? std::atoi(argv[1]) : total_available_workers;
+    int target_team_size = (argc > 1) ? std::atoi(argv[1]) : total_available_units;
+    std::string output_file = (argc > 2) ? argv[2] : "routes.csv";
     std::cout << "🎯 Target team size: " << target_team_size << std::endl;
+    std::cout << "📄 Output file: " << output_file << std::endl;
 
-    // Main recursive trip planner
-    std::vector<VanTrip> trips = solveVanRoutes(villages, target_team_size);
+    // Main recursive grouping planner
+    std::vector<GroupResult> trips = solveGroups(entities, target_team_size);
 
-    // Write van_routes.csv
-    std::ofstream out("van_routes.csv");
-    out << "Van ID,Villages,Distance (km),Fuel Cost (USD)\n";
+    // Write results to specified output file
+    std::ofstream out(output_file);
+    out << "ID,Items,Distance (km),Cost\n";
     double totalFuel = 0.0;
     int totalCrew = 0;
 
@@ -41,19 +43,19 @@ int main(int argc, char *argv[])
     {
         const auto &trip = trips[i];
         out << (i + 1) << ",";
-        for (int vidx : trip.villageIndices)
-            out << villages[vidx].name << " ";
-        out << "," << std::fixed << std::setprecision(4) << trip.distance << ",";
-        out << std::setprecision(5) << trip.fuelCost << "\n";
+        for (int vidx : trip.itemIndices)
+            out << entities[vidx].name << " ";
+        out << "," << std::fixed << std::setprecision(4) << trip.metric << ",";
+        out << std::setprecision(5) << trip.cost << "\n";
 
-        totalFuel += trip.fuelCost;
-        totalCrew += trip.crewSize;
+    totalFuel += trip.cost;
+    totalCrew += trip.resourceUnits;
     }
 
     out.close();
 
     // Summary
-    std::cout << "✅ Total workers picked up: " << totalCrew << std::endl;
+    std::cout << "✅ Total units selected: " << totalCrew << std::endl;
     std::cout << "📉 Shortfall: " << std::max(0, target_team_size - totalCrew) << std::endl;
     std::cout << "⛽ Total fuel cost: $" << std::fixed << std::setprecision(2) << totalFuel << std::endl;
 

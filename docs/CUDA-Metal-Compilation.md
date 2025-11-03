@@ -34,11 +34,11 @@ cmake --build . -j
 ./knapsack_solver 50
 
 # Output CSV will be written next to the binary
-ls van_routes.csv
+ls routes.csv
 ```
 
 Notes:
-- Default input CSV is `data/villages.csv` (relative to repo root when run from `build/`).
+- Default input CSV is located under `data/`.
 - If Metal initialization fails, the solver falls back to a CPU heuristic.
 
 ### Build on Jetson/NVIDIA (CUDA backend)

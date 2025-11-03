@@ -1,31 +1,28 @@
 # Knapsack
 
-A route-planning knapsack solver inspired by classical QAOA, now with dual backends:
+A generalized, block‑aware knapsack solver with GPU acceleration and a modern V2 pipeline.
 
-- NVIDIA CUDA (Jetson and other CUDA-capable systems)
-- Apple Metal (Apple Silicon, in-process via Objective‑C++/cgo)
+Backends:
+- NVIDIA CUDA (Jetson and other CUDA‑capable systems)
+- Apple Metal (Apple Silicon, in‑process via Objective‑C++/cgo)
+- CPU fallback on all platforms
 
-On macOS Apple Silicon, CUDA is not required; the solver uses a Metal-based evaluator by default with a CPU fallback.
+On macOS Apple Silicon, CUDA is not required; the library uses a Metal‑based evaluator by default and automatically falls back to CPU if Metal is unavailable.
 
 ## Overview
 
-This project tackles generalized knapsack-style selection for van trips and worker pickup, balancing distance and capacity. The classical algorithm (inspired by QAOA scoring) evaluates candidate selections and chooses the best plan per trip.
+This project tackles generalized knapsack‑style selection for many domains (e.g., logistics, packing, portfolio selection). The V2 pipeline adds a JSON‑driven, multi‑constraint solver with GPU evaluators (CUDA/Metal), a C API, Go bindings, and a small CLI.
 
-Backends:
-- CUDA: original GPU kernels for population generation/evaluation on Jetson/NVIDIA.
-- Metal: runtime-compiled shader that scores candidates on Apple GPUs without requiring the external `metal` CLI.
-- CPU fallback: deterministic heuristic used when a GPU backend isn’t available.
-
-Key outputs: a `van_routes.csv` describing trips, crew sizes, distances, and fuel cost.
+The legacy CSV demo is still available and produces a tabular solution CSV; column names and meaning are example‑specific to the demo, not the core solver.
 
 ## Features
 
-- Dual GPU backends: CUDA (NVIDIA) and Metal (Apple Silicon)
-- Runtime shader compilation on macOS (no external `metal` tool dependency)
-- Capacity-aware candidate generation with soft penalties
-- Recursive/greedy hybrid classical solver for trip selection
-- Distance-based optimization using the haversine formula
-- Configurable mutation/population parameters (for CUDA path)
+- V2 general solver: multi‑term objective and multiple soft capacity constraints
+- Dominance filtering preprocessor (drop dominated items; optional surrogate capacity)
+- Beam search (select mode) with per‑iteration debug metrics (constraint slacks, penalty parts)
+- Dual GPU backends: CUDA (NVIDIA) and Metal (Apple Silicon) with automatic CPU fallback
+- Runtime shader compilation on macOS (no external `metal` CLI dependency)
+- Classical (CSV) solver retained for historical scenarios
 
 ## Requirements
 
@@ -53,17 +50,19 @@ mkdir -p build && cd build
 cmake ..
 cmake --build . -j
 
-# Run the solver (optional arg = target team size)
+# Run the solver (optional args: target team size, output filename)
 ./knapsack_solver 50
+# or specify a custom output file:
+./knapsack_solver 50 my_results.csv
 
 # Output CSV will be written in the build directory
-ls van_routes.csv
+ls routes.csv
 ```
 
 Notes:
-- The default input CSV is `data/villages.csv` relative to the repo root.
-- The Metal shader (`kernels/metal/shaders/eval_block_candidates.metal`) is read at runtime and compiled in-process.
-- If Metal initialization fails, the solver falls back to a CPU heuristic.
+- The default input CSV is `data/villages_50.csv` relative to the repo root (classical path).
+- The Metal shader (`kernels/metal/shaders/eval_block_candidates.metal`) is read at runtime and compiled in‑process for the V2 evaluator.
+- If Metal initialization fails, the library falls back to a CPU evaluator.
 
 ### Jetson / NVIDIA (CUDA backend)
 
@@ -104,9 +103,59 @@ JSON
 ```
 
 Notes:
-- Debug mode prints per-iteration best totals with constraint slacks and per-constraint penalty parts.
-- The C API is available via `knapsack-library/include/knapsack_c.h` with `solve_knapsack_v2_from_json`.
+- Debug mode prints per‑iteration best totals with constraint slacks and per‑constraint penalty parts.
+- The C API is available via `knapsack-library/include/knapsack_c.h` exposing `solve_knapsack_v2_from_json` and `free_knapsack_solution_v2`.
 - On macOS, the library uses Metal at runtime and falls back to CPU if Metal is unavailable.
+
+V2 at a glance:
+- Problem modes: select (current), assign (WIP wiring)
+- Objective: weighted sum of terms (e.g., value, profit)
+- Constraints: one or more soft capacity constraints with penalties
+- Search: beam search with configurable width/iterations/seed
+- Preprocess: dominance filters (exact single‑constraint or surrogate) with mapping back to original item indices
+
+Example config (select, tiny):
+
+```json
+{
+    "mode": "select",
+    "items": [
+        { "id": 0, "obj": [10.0], "w": [3.0] },
+        { "id": 1, "obj": [9.0],  "w": [4.0] },
+        { "id": 2, "obj": [5.0],  "w": [2.0] }
+    ],
+    "constraints": [ { "capacity": 5.0 } ]
+}
+```
+
+Example options JSON:
+
+```json
+{ "beam_width": 32, "iters": 5, "seed": 42, "debug": true,
+    "dom_enable": true, "dom_eps": 1e-9, "dom_surrogate": true }
+```
+
+Solution fields (C API): `num_items`, `select[]`, `objective`, `penalty`, `total`.
+
+## Go bindings (V2)
+
+The V2 C API is wrapped for Go via cgo. Platform wrappers expose a consistent Go entry point:
+
+```go
+func SolveKnapsack(configJSON string, optionsJSON string) (*V2Solution, error)
+
+type V2Solution struct {
+    NumItems  int
+    Select    []int   // length == NumItems; 0/1 per item
+    Objective float64 // sum of weighted objective terms
+    Penalty   float64 // total penalty from soft constraints
+    Total     float64 // Objective - Penalty
+}
+```
+
+Platform notes:
+- Darwin/arm64: linked with `-framework Metal -framework Foundation -lc++`. Uses Metal at runtime with CPU fallback.
+- Linux: linked with `-lstdc++` and `-lknapsack`. CUDA linkage is optional and guarded via a build tag (e.g., `-tags=cuda`).
 
 ## Go Metal Binding (darwin/arm64)
 
@@ -180,183 +229,37 @@ ls /usr/local/include/knapsack_c.h
 ls /usr/local/lib/libknapsack.a
 ```
 
-### Minimal C usage
+### Minimal C usage (V2)
 
 ```c
 #include "knapsack_c.h"
 #include <stdio.h>
 
 int main() {
-    const char* csv = "../data/villages.csv"; // adjust path for your runtime
-    int target = 50;
-    KnapsackSolution* sol = solve_knapsack(csv, target);
-    if (!sol) {
-        fprintf(stderr, "knapsack solve failed\n");
-        return 1;
-    }
-    printf("Trips: %d, Crew: %d, Shortfall: %d, Fuel: %.2f\n",
-           sol->num_trips, sol->total_crew, sol->shortfall, sol->total_fuel_cost);
-    // ... iterate sol->trips ...
-    free_knapsack_solution(sol);
+    const char* cfg = "{\"mode\":\"select\",\"items\":[{\"obj\":[10],\"w\":[3]}],\"constraints\":[{\"capacity\":5}]}";
+    const char* opts = "{\"beam_width\":8,\"iters\":3}";
+    KnapsackSolutionV2* out = NULL;
+    int rc = solve_knapsack_v2_from_json(cfg, opts, &out);
+    if (rc != 0 || !out) { fprintf(stderr, "V2 solve failed (%d)\n", rc); return 1; }
+    printf("num_items=%d total=%.3f\n", out->num_items, out->total);
+    free_knapsack_solution_v2(out);
     return 0;
 }
 ```
 
 ### Go (cgo) usage for Chariot
 
-If your Chariot service is in Go, here are ready-to-use cgo bindings that match the current C API.
-
-Darwin/arm64 (Apple Silicon, Metal runtime):
+Use the V2 C API via cgo. The platform wrappers expose the same Go signature on macOS and Linux:
 
 ```go
-//go:build darwin && arm64
-
-package chariot
-
-/*
-#cgo CFLAGS: -I${SRCDIR}/../third_party/knapsack/knapsack-library/include
-#cgo darwin LDFLAGS: -L${SRCDIR}/../third_party/knapsack/build/knapsack-library -lknapsack -framework Metal -framework Foundation -lc++
-#include "knapsack_c.h"
-#include <stdlib.h>
-*/
-import "C"
-
-import (
-    "errors"
-    "unsafe"
-)
-
-type VanTrip struct {
-    VanID       int
-    VillageCSV  string
-    DistanceKM  float64
-    FuelUSD     float64
-    CrewSize    int
-}
-
-type Solution struct {
-    Trips       []VanTrip
-    TotalCrew   int
-    Shortfall   int
-    TotalFuel   float64
-}
-
-func SolveKnapsack(csvPath string, target int) (*Solution, error) {
-    cpath := C.CString(csvPath)
-    defer C.free(unsafe.Pointer(cpath))
-
-    sol := C.solve_knapsack(cpath, C.int(target))
-    if sol == nil {
-        return nil, errors.New("knapsack solve failed")
-    }
-    defer C.free_knapsack_solution(sol)
-
-    n := int(sol.num_trips)
-    trips := make([]VanTrip, 0, n)
-    if n > 0 && sol.trips != nil {
-        slice := (*[1 << 30]C.VanTripResult)(unsafe.Pointer(sol.trips))[:n:n]
-        for i := 0; i < n; i++ {
-            t := slice[i]
-            trips = append(trips, VanTrip{
-                VanID:      int(t.van_id),
-                VillageCSV: C.GoString(t.village_names),
-                DistanceKM: float64(t.distance),
-                FuelUSD:    float64(t.fuel_cost),
-                CrewSize:   int(t.crew_size),
-            })
-        }
-    }
-
-    return &Solution{
-        Trips:     trips,
-        TotalCrew: int(sol.total_crew),
-        Shortfall: int(sol.shortfall),
-        TotalFuel: float64(sol.total_fuel_cost),
-    }, nil
-}
+func SolveKnapsack(configJSON string, optionsJSON string) (*V2Solution, error)
 ```
 
-Linux/arm64 (Jetson, optional CUDA link):
-
-```go
-//go:build linux && arm64
-
-package chariot
-
-/*
-#cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -L/usr/local/lib -lknapsack -lstdc++ -lm
-// If your app separately depends on CUDA runtime, you may also need:
-// #cgo LDFLAGS: -L/usr/local/cuda/lib64 -lcudart -lcuda -lcurand
-#include "knapsack_c.h"
-#include <stdlib.h>
-*/
-import "C"
-
-import (
-    "errors"
-    "unsafe"
-)
-
-type VanTrip struct {
-    VanID       int
-    VillageCSV  string
-    DistanceKM  float64
-    FuelUSD     float64
-    CrewSize    int
-}
-
-type Solution struct {
-    Trips       []VanTrip
-    TotalCrew   int
-    Shortfall   int
-    TotalFuel   float64
-}
-
-func SolveKnapsack(csvPath string, target int) (*Solution, error) {
-    cpath := C.CString(csvPath)
-    defer C.free(unsafe.Pointer(cpath))
-
-    sol := C.solve_knapsack(cpath, C.int(target))
-    if sol == nil {
-        return nil, errors.New("knapsack solve failed")
-    }
-    defer C.free_knapsack_solution(sol)
-
-    n := int(sol.num_trips)
-    trips := make([]VanTrip, 0, n)
-    if n > 0 && sol.trips != nil {
-        slice := (*[1 << 30]C.VanTripResult)(unsafe.Pointer(sol.trips))[:n:n]
-        for i := 0; i < n; i++ {
-            t := slice[i]
-            trips = append(trips, VanTrip{
-                VanID:      int(t.van_id),
-                VillageCSV: C.GoString(t.village_names),
-                DistanceKM: float64(t.distance),
-                FuelUSD:    float64(t.fuel_cost),
-                CrewSize:   int(t.crew_size),
-            })
-        }
-    }
-
-    return &Solution{
-        Trips:     trips,
-        TotalCrew: int(sol.total_crew),
-        Shortfall: int(sol.shortfall),
-        TotalFuel: float64(sol.total_fuel_cost),
-    }, nil
-}
-```
-
-Notes:
-- Adjust `-I` and `-L` paths to where you install or vendor the knapsack headers and library (e.g., `/usr/local/include` and `/usr/local/lib`).
-- On Jetson, the knapsack library itself does not require CUDA; only link CUDA libs if your application also uses them.
-- Provide non-matching build-tag stubs as needed (e.g., return a clear error on unsupported platforms).
-- Ensure CGO is enabled and your toolchain targets the correct OS/ARCH in your editor/CI.
+Ensure headers/libs are discoverable (`/usr/local/include/knapsack_c.h`, `/usr/local/lib/libknapsack.a`), or vendor them and point `-I`/`-L` accordingly. On macOS, Metal is used at runtime with CPU fallback; on Linux, CUDA linkage is optional and should be guarded with a build tag (e.g., `-tags=cuda`).
 
 ## Data
 
-Sample CSVs live under `data/` (e.g., `villages.csv`, `villages_300.csv`). The executable reads `../data/villages.csv` by default when run from `build/`.
+Sample CSVs live under `data/` (e.g., `entities.csv`, `entities_300.csv` for legacy tests). The executable reads `../data/entities.csv` by default when run from `build/`.
 
 ## Project layout
 
@@ -372,7 +275,7 @@ Sample CSVs live under `data/` (e.g., `villages.csv`, `villages_300.csv`). The e
   - A: No. The shader is compiled at runtime via Metal APIs.
 
 - Q: Can I still build the CUDA version?
-  - A: Yes. On non-Apple hosts, the build enables CUDA automatically.
+  - A: Yes. On non‑Apple hosts, the build enables CUDA as configured by CMake. CUDA is not available on Apple Silicon; Metal is used instead with CPU fallback.
 
 - Q: Where is the output written?
-  - A: `van_routes.csv` in the current working directory (e.g., the `build/` dir when executed there).
+  - A: By default, `routes.csv` in the current working directory. You can specify a custom filename as the second command-line argument: `./knapsack_solver 50 my_output.csv`

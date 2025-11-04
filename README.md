@@ -223,8 +223,8 @@ The [`examples/`](examples/) directory contains extensive real-world examples:
 - `02_debt_portfolio.py` - Debt collection optimization
 - `03_investment_portfolio.py` - Financial portfolio allocation
 - `04_pandas_integration.py` - CSV data and DataFrame workflows
-- `05_visualization.py` - Plotting and analysis (coming soon)
-- `06_scout_mode.py` - Exact solver integration (coming soon)
+- `05_visualization.py` - Plotting and analysis
+- `06_scout_mode.py` - Exact solver integration
 
 Run any example:
 ```bash

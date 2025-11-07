@@ -1,0 +1,50 @@
+# Linux CPU-only build - no Metal dependencies
+# This produces libknapsack_cpu.a for use in go-chariot on Linux/Azure
+
+FROM ubuntu:22.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    curl \
+    libstdc++-11-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy source code
+COPY . /build/knapsack
+
+# Download picojson directly (git submodules don't work without .git history)
+RUN mkdir -p /build/knapsack/third_party/picojson && \
+    curl -fsSL -o /build/knapsack/third_party/picojson/picojson.h \
+      https://raw.githubusercontent.com/kazuho/picojson/master/picojson.h
+
+# Verify picojson is present
+RUN test -f /build/knapsack/third_party/picojson/picojson.h || \
+    (echo "ERROR: picojson.h not found!" && exit 1)
+
+# Build CPU-only library (no Metal support)
+RUN cd /build/knapsack/knapsack-library && \
+    rm -rf build && mkdir -p build && cd build && \
+    echo "=== Building CPU-only knapsack library ===" && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_CPU_ONLY=ON && \
+    cmake --build . --target knapsack -j$(nproc) && \
+    echo "=== Installing library and header ===" && \
+    cp libknapsack.a /usr/local/lib/libknapsack_cpu.a && \
+    cp ../include/knapsack_c.h /usr/local/include/knapsack_cpu.h && \
+    ls -lh /usr/local/lib/libknapsack_cpu.a /usr/local/include/knapsack_cpu.h
+
+# Verify installation
+RUN echo "=== CPU-only library built successfully ===" && \
+    file /usr/local/lib/libknapsack_cpu.a && \
+    nm /usr/local/lib/libknapsack_cpu.a | grep -i metal || echo "✓ No Metal symbols found (as expected)"
+
+# Create minimal artifact image
+FROM scratch AS artifacts
+COPY --from=builder /usr/local/lib/libknapsack_cpu.a /lib/libknapsack_cpu.a
+COPY --from=builder /usr/local/include/knapsack_cpu.h /include/knapsack_cpu.h

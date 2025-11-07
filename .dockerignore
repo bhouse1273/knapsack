@@ -1,0 +1,41 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+.cmake/
+knapsack-library/build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+*.so
+
+# Temporary files
+*.log
+*.tmp
+tmp/
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+
+# Exclude empty git submodule directories
+third_party/picojson/
+third_party/pybind11/

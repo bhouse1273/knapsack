@@ -15,7 +15,10 @@
 #include <random>
 #include <string>
 
+// Metal API (only available on Apple with Metal support enabled)
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
 #include "metal_api.h"
+#endif
 
 namespace v2 {
 
@@ -136,7 +139,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
 
   // Prepare Metal pipeline
   bool useMetal = false;
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
   std::string msl;
   if (read_file_first_of({
         "../kernels/metal/shaders/eval_block_candidates.metal",
@@ -254,6 +257,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     // Evaluate
     const int M = (int)cand.size();
     std::vector<float> obj(M, 0.0f), pen(M, 0.0f);
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
     if (useMetal) {
       auto packed = pack2bit(cand, N);
       const int bytes_per = (N + 3) / 4;
@@ -274,7 +278,9 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
         useMetal = false; // fall back to CPU
       }
     }
-    if (!useMetal) {
+    if (!useMetal)
+#endif
+    {
       // CPU fallback: EvaluateCPU_Select
       for (int c = 0; c < M; ++c) {
         CandidateSelect cs; cs.select = cand[c]; EvalResult r; std::string e; if (EvaluateCPU_Select(cfg, soaF, cs, &r, &e)) { obj[c] = (float)r.objective; pen[c] = (float)r.penalty; }
@@ -321,9 +327,8 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
   // Final best
   std::vector<float> obj(beam.size(), 0.0f), pen(beam.size(), 0.0f);
   bool useMetalFinal = false;
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
   useMetalFinal = true;
-#endif
   if (useMetalFinal) {
     auto packed = pack2bit(beam, N);
     std::vector<float> fvals(N), fw(N), caps(1); for (int i = 0; i < N; ++i) { fvals[i] = (float)values[i]; fw[i] = (float)weights[i]; } caps[0] = (float)limit;
@@ -333,7 +338,9 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
   in.item_weights = fw.data(); in.group_capacities = caps.data(); in.num_groups = 1; in.penalty_coeff = (float)penW; in.penalty_power = (float)penP; MetalEvalOut out{ obj.data(), pen.data() };
     if (knapsack_metal_eval(&in, &out, nullptr, 0) != 0) { useMetalFinal = false; }
   }
-  if (!useMetalFinal) {
+  if (!useMetalFinal)
+#endif
+  {
     for (int c = 0; c < (int)beam.size(); ++c) { CandidateSelect cs; cs.select = beam[c]; EvalResult r; std::string e; if (EvaluateCPU_Select(cfg, soaF, cs, &r, &e)) { obj[c] = (float)r.objective; pen[c] = (float)r.penalty; } }
   }
   int best = argmax_score(obj, pen);

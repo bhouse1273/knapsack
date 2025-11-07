@@ -150,7 +150,7 @@ func (s *knapsackSolver) Solve(config *Config) (*Solution, error) {
 FROM knapsack-linux-cuda AS knapsack-lib
 
 # Stage 2: Build go-chariot with CUDA support
-FROM nvidia/cuda:12.0-runtime-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
 
 # Install Go and build tools
 RUN apt-get update && apt-get install -y \
@@ -178,7 +178,7 @@ ENV CGO_LDFLAGS="-L/usr/local/lib -lknapsack_cuda -lstdc++ -lm -lcudart"
 RUN go build -tags "cgo,cuda" -o go-chariot ./cmd/server
 
 # Stage 3: Runtime with CUDA
-FROM nvidia/cuda:12.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \

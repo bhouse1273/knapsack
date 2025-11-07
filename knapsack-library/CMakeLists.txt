@@ -57,6 +57,22 @@ endif()
 
 add_library(knapsack STATIC ${LIB_SOURCES})
 
+# Set platform-specific output name
+if(BUILD_CPU_ONLY)
+  set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_cpu")
+  message(STATUS "Library output name: libknapsack_cpu.a")
+elseif(BUILD_CUDA)
+  set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_cuda")
+  message(STATUS "Library output name: libknapsack_cuda.a")
+elseif(USE_METAL)
+  set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_metal")
+  message(STATUS "Library output name: libknapsack_metal.a")
+else()
+  # Fallback for any other case
+  set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_generic")
+  message(STATUS "Library output name: libknapsack_generic.a")
+endif()
+
 # Set Metal directory path (always needed for headers, even on Linux)
 set(KERNELS_METAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../kernels/metal")
 

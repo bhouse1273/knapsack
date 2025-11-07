@@ -1,7 +1,7 @@
 # CUDA GPU-accelerated build for Linux NVIDIA GPUs
 # Produces libknapsack_cuda.a for deployment on GPU-enabled Azure VMs
 
-FROM nvidia/cuda:12.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -37,7 +37,7 @@ RUN cd /build/knapsack/knapsack-library && \
         -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" && \
     cmake --build . --target knapsack -j$(nproc) && \
     echo "=== Installing library and header ===" && \
-    cp libknapsack.a /usr/local/lib/libknapsack_cuda.a && \
+    cp libknapsack_cuda.a /usr/local/lib/libknapsack_cuda.a && \
     cp ../include/knapsack_c.h /usr/local/include/knapsack_cuda.h && \
     ls -lh /usr/local/lib/libknapsack_cuda.a /usr/local/include/knapsack_cuda.h
 

@@ -17,11 +17,11 @@ docker build -f docker/Dockerfile.linux-cuda -t knapsack-linux-cuda .
 
 ### macOS - Metal GPU (Default)
 ```bash
-cd knapsack-library && mkdir build && cd build
-cmake ..
+cd knapsack-library && mkdir build-metal && cd build-metal
+cmake .. -DUSE_METAL=ON
 cmake --build . --target knapsack -j
 ```
-**Output**: `libknapsack.a` (1.7MB with Metal)
+**Output**: `libknapsack_metal.a` (Metal GPU-accelerated)
 
 ### macOS - CPU Only
 ```bash
@@ -29,14 +29,35 @@ cd knapsack-library && mkdir build-cpu && cd build-cpu
 cmake .. -DBUILD_CPU_ONLY=ON
 cmake --build . --target knapsack -j
 ```
-**Output**: `libknapsack.a` (1.7MB without Metal)
+**Output**: `libknapsack_cpu.a` (CPU-only, no GPU)
+
+### Local Build (All Platforms) - Makefile
+```bash
+# Build CPU-only library
+make build-cpu
+
+# Build CUDA library (requires CUDA toolkit)
+make build-cuda
+
+# Build Metal library (macOS only)
+make build-metal
+
+# Build all supported libraries for current platform
+make build-all
+
+# Clean legacy libraries (old libknapsack.a)
+make clean-legacy
+
+# Clean all build artifacts
+make clean-all
+```
 
 ## Go Build Tags
 
 ```go
 //go:build linux && cgo && !cuda   // Uses libknapsack_cpu.a
 //go:build linux && cgo && cuda    // Uses libknapsack_cuda.a (NVIDIA)
-//go:build darwin && cgo           // Uses libknapsack.a (Metal)
+//go:build darwin && cgo           // Uses libknapsack_metal.a (Metal)
 //go:build !cgo                    // Stub implementation
 ```
 
@@ -57,42 +78,50 @@ CGO_LDFLAGS="-L/usr/local/lib -lknapsack_cuda -lstdc++ -lm -lcudart"
 ### macOS Metal
 ```bash
 CGO_ENABLED=1
-CGO_LDFLAGS="-L/usr/local/lib -lknapsack -framework Metal -framework Foundation -lstdc++ -lm"
-```
-
-## Docker Integration
-
-```dockerfile
-FROM knapsack-linux-cpu AS knapsack-lib
-FROM golang:1.21 AS builder
-
-COPY --from=knapsack-lib /lib/libknapsack_cpu.a /usr/local/lib/
-COPY --from=knapsack-lib /include/knapsack_cpu.h /usr/local/include/
-
-ENV CGO_ENABLED=1
-ENV CGO_LDFLAGS="-L/usr/local/lib -lknapsack_cpu -lstdc++ -lm"
-
-RUN go build -tags cgo -o app ./cmd/server
+CGO_LDFLAGS="-L/usr/local/lib -lknapsack_metal -framework Metal -framework Foundation -lstdc++ -lm"
 ```
 
 ## Verification
 
 ```bash
-# Check for Metal symbols (should be none on Linux build)
-docker run --rm knapsack-linux-cpu-full \
-  nm /usr/local/lib/libknapsack_cpu.a | grep -i metal
+# Verify platform-specific libraries
+./verify_libraries.sh
 
-# List library size
+# Check CPU library (no GPU symbols)
+nm knapsack-library/build-cpu/libknapsack_cpu.a | grep -i "metal\|cuda" || echo "✓ No GPU symbols"
+
+# Check CUDA library (has CUDA symbols)
+nm knapsack-library/build-cuda/libknapsack_cuda.a | grep -i cuda
+
+# Check Metal library (has Metal symbols, macOS only)
+nm knapsack-library/build-metal/libknapsack_metal.a | grep -i metal
+```
+
+## Docker Verification
+
+```bash
+# Check CPU library in Docker
 docker run --rm knapsack-linux-cpu-full \
-  ls -lh /usr/local/lib/libknapsack_cpu.a
+  nm /usr/local/lib/libknapsack_cpu.a | grep -i metal || echo "✓ No Metal symbols"
+
+# Check CUDA library in Docker
+docker run --gpus all --rm knapsack-linux-cuda-full \
+  nm /usr/local/lib/libknapsack_cuda.a | grep -i cuda
+
+# List library sizes
+docker run --rm knapsack-linux-cpu-full ls -lh /usr/local/lib/libknapsack_cpu.a
+docker run --gpus all --rm knapsack-linux-cuda-full ls -lh /usr/local/lib/libknapsack_cuda.a
 ```
 
 ## Key Files
 
-| Platform | Library | Header | Size |
-|----------|---------|--------|------|
-| Linux | `libknapsack_cpu.a` | `knapsack_cpu.h` | 274KB |
-| macOS | `libknapsack.a` | `knapsack_c.h` | 1.7MB |
+| Platform | Library | Header | Expected Size | Build Command |
+|----------|---------|--------|---------------|---------------|
+| Linux CPU | `libknapsack_cpu.a` | `knapsack_cpu.h` | 274KB | `make build-cpu` |
+| Linux CUDA | `libknapsack_cuda.a` | `knapsack_cuda.h` | ~300KB | `make build-cuda` |
+| macOS Metal | `libknapsack_metal.a` | `knapsack_c.h` | ~1.7MB | `make build-metal` |
+
+**Important**: All libraries now have platform-specific names. If you find `libknapsack.a` without a suffix, it's a legacy library. Run `make clean-legacy` to remove it.
 
 ## Documentation
 

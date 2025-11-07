@@ -35,7 +35,7 @@ RUN cd /build/knapsack/knapsack-library && \
         -DBUILD_CPU_ONLY=ON && \
     cmake --build . --target knapsack -j$(nproc) && \
     echo "=== Installing library and header ===" && \
-    cp libknapsack.a /usr/local/lib/libknapsack_cpu.a && \
+    cp libknapsack_cpu.a /usr/local/lib/libknapsack_cpu.a && \
     cp ../include/knapsack_c.h /usr/local/include/knapsack_cpu.h && \
     ls -lh /usr/local/lib/libknapsack_cpu.a /usr/local/include/knapsack_cpu.h
 

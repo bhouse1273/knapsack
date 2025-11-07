@@ -5,7 +5,7 @@
 ## Overview
 
 The knapsack library now provides **platform-specific builds** for clean integration:
-- ✅ **macOS**: Metal GPU-accelerated library (`libknapsack.a` with Metal support)
+- ✅ **macOS**: Metal GPU-accelerated library (`libknapsack_metal.a`)
 - ✅ **Linux CPU**: CPU-only library (`libknapsack_cpu.a` with no GPU dependencies)
 - ✅ **Linux CUDA**: NVIDIA GPU-accelerated library (`libknapsack_cuda.a`)
 - ✅ **Docker**: Simplified single-stage builds for each platform
@@ -20,7 +20,7 @@ Instead of a single cross-platform library with conditional compilation, we now 
 |----------|---------|----------|---------------|-------------|
 | **Linux CPU** | `libknapsack_cpu.a` | CPU-only, no GPU | `cmake -DBUILD_CPU_ONLY=ON` | 1x baseline |
 | **Linux CUDA** | `libknapsack_cuda.a` | NVIDIA GPU accelerated | `cmake -DBUILD_CUDA=ON` | 10-50x faster |
-| **macOS** | `libknapsack.a` | Metal GPU + CPU fallback | `cmake .` (default) | 15-30x faster |
+| **macOS Metal** | `libknapsack_metal.a` | Apple GPU accelerated | `cmake -DUSE_METAL=ON` | 15-30x faster |
 
 **Benefits:**
 - 🚀 **Faster builds**: No GPU compilation unless needed
@@ -158,7 +158,7 @@ Create `infrastructure/docker/go-chariot/Dockerfile.cuda` in the chariot-ecosyst
 FROM knapsack-linux-cuda AS knapsack-lib
 
 # Stage 2: Build go-chariot with CGO
-FROM nvidia/cuda:12.0-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
 
 # Install Go
 RUN apt-get update && apt-get install -y \
@@ -196,7 +196,7 @@ RUN go build \
     ./cmd/server
 
 # Stage 3: Runtime image with CUDA runtime
-FROM nvidia/cuda:12.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -214,7 +214,7 @@ ENTRYPOINT ["/usr/local/bin/go-chariot"]
 **Use Case**: Azure NC-series VMs (NVIDIA GPUs), 10-50x faster for large workloads
 
 **Key Differences from CPU Version:**
-- ✅ Base images: `nvidia/cuda:12.0-devel` (build) and `nvidia/cuda:12.0-runtime` (runtime)
+- ✅ Base images: `nvidia/cuda:12.6.0-devel` (build) and `nvidia/cuda:12.6.0-runtime` (runtime)
 - ✅ Links against `libknapsack_cuda.a` not `libknapsack_cpu.a`
 - ✅ Includes `-lcudart` (CUDA runtime) in LDFLAGS
 - ✅ Uses `cuda` build tag to select CUDA-enabled Go code
@@ -344,7 +344,7 @@ package solver
 
 /*
 #cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -L/usr/local/lib -lknapsack -framework Metal -framework Foundation -lstdc++ -lm
+#cgo LDFLAGS: -L/usr/local/lib -lknapsack_metal -framework Metal -framework Foundation -lstdc++ -lm
 
 #include "knapsack_c.h"
 #include <stdlib.h>
@@ -408,7 +408,7 @@ func (s *knapsackSolver) Close() error {
 **How It Works:**
 - Linux CPU builds: `knapsack_linux.go` (build tag `!cuda`) → links to `libknapsack_cpu.a`
 - Linux CUDA builds: `knapsack_linux_cuda.go` (build tag `cuda`) → links to `libknapsack_cuda.a`
-- macOS builds: `knapsack_darwin.go` → links to `libknapsack.a`  
+- macOS builds: `knapsack_darwin.go` → links to `libknapsack_metal.a`  
 - Non-CGO builds: stub (returns error)
 - No runtime platform detection needed!
 
@@ -523,10 +523,10 @@ docker-build-knapsack-cuda:
 
    **Metal (macOS)**:
    ```
-   -L/usr/local/lib -lknapsack -framework Metal -framework Foundation -lstdc++ -lm
+   -L/usr/local/lib -lknapsack_metal -framework Metal -framework Foundation -lstdc++ -lm
    ```
    - `-L/usr/local/lib`: Where to find libraries
-   - `-lknapsack`: Link against Metal library
+   - `-lknapsack_metal`: Link against Metal library
    - `-framework Metal`: Link against Metal GPU framework
    - `-framework Foundation`: Link against Foundation framework
    - `-lstdc++`: Link against C++ standard library
@@ -690,9 +690,16 @@ docker run --rm go-chariot:knapsack ls -l /usr/local/include/knapsack_c.h
 
 **Cause**: Linker can't find the library
 
-**Solution**: Verify `CGO_LDFLAGS` includes `-L/usr/local/lib -lknapsack`:
+**Solution**: Verify `CGO_LDFLAGS` includes the correct library for your platform:
 ```bash
-docker run --rm go-chariot:knapsack ls -l /usr/local/lib/libknapsack.a
+# Linux CPU
+docker run --rm go-chariot:cpu ls -l /usr/local/lib/libknapsack_cpu.a
+
+# Linux CUDA
+docker run --gpus all --rm go-chariot:cuda ls -l /usr/local/lib/libknapsack_cuda.a
+
+# macOS Metal (local)
+ls -l /usr/local/lib/libknapsack_metal.a
 ```
 
 ### Error: "undefined reference to std::vector"
@@ -707,8 +714,8 @@ docker run --rm go-chariot:knapsack ls -l /usr/local/lib/libknapsack.a
 
 **Solution**: 
 1. Verify CUDA runtime is installed: `ldconfig -p | grep cuda`
-2. For Docker, ensure using `nvidia/cuda:12.0-runtime` base image
-3. Verify nvidia-docker is installed: `docker run --gpus all nvidia/cuda:12.0-runtime nvidia-smi`
+2. For Docker, ensure using `nvidia/cuda:12.6.0-runtime` base image
+3. Verify nvidia-docker is installed: `docker run --gpus all nvidia/cuda:12.6.0-runtime-ubuntu22.04 nvidia-smi`
 
 ### Error: "no CUDA-capable device is detected"
 
@@ -717,7 +724,7 @@ docker run --rm go-chariot:knapsack ls -l /usr/local/lib/libknapsack.a
 **Solution**:
 1. Check GPU is present: `lspci | grep -i nvidia`
 2. Install NVIDIA drivers: `sudo apt-get install nvidia-driver-525`
-3. Verify nvidia-docker: `docker run --gpus all nvidia/cuda:12.0-runtime nvidia-smi`
+3. Verify nvidia-docker: `docker run --gpus all nvidia/cuda:12.6.0-runtime-ubuntu22.04 nvidia-smi`
 4. Check Docker daemon has nvidia runtime: `docker info | grep -i runtime`
 
 ### Build Works Locally but Fails in Docker

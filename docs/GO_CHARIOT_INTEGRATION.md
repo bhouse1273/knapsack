@@ -32,20 +32,48 @@ Instead of a single cross-platform library with conditional compilation, we now 
 
 ## Prerequisites
 
-### Option 1: Linux CPU-Only Build
+### Pre-Built Platform Libraries ✅
 
-1. Built Linux CPU-only library:
-   ```bash
-   cd /path/to/knapsack
-   docker build -f docker/Dockerfile.linux-cpu -t knapsack-linux-cpu .
-   ```
+The knapsack repository includes **pre-built platform-specific libraries** in `knapsack-library/lib/`:
 
-2. Verify artifacts:
-   ```bash
-   docker build -f docker/Dockerfile.linux-cpu --target builder -t knapsack-linux-cpu-full .
-   docker run --rm knapsack-linux-cpu-full ls -lh /usr/local/lib/libknapsack_cpu.a
-   # Expected: 274K CPU-only library
-   ```
+```
+knapsack-library/lib/
+├── linux-cpu/
+│   ├── libknapsack_cpu.a      # 274KB - CPU-only, no GPU dependencies
+│   └── knapsack_cpu.h
+├── linux-cuda/
+│   ├── libknapsack_cuda.a     # 631KB - NVIDIA CUDA GPU accelerated
+│   └── knapsack_cuda.h
+└── macos-metal/
+    ├── libknapsack_metal.a    # 216KB - Apple Metal GPU accelerated
+    └── knapsack_metal.h
+```
+
+**These libraries are committed to the repository** so you **don't need to build them** unless:
+- You modify the knapsack C++ source code
+- You need different CUDA architectures
+- You want to rebuild from source for verification
+
+### Rebuilding Libraries (Optional)
+
+Only needed if you modify knapsack source code:
+
+```bash
+cd /path/to/knapsack
+
+# Build all platform libraries (requires Docker + macOS for Metal)
+make build-all-platforms
+
+# This will:
+# 1. Build Linux CPU library via Docker
+# 2. Build Linux CUDA library via Docker
+# 3. Build macOS Metal library natively
+# 4. Extract all to knapsack-library/lib/
+# 5. Verify each library
+
+# Verify libraries are present
+make verify-libs
+```
 
 ### Option 4: Azure App Service (CPU-Only)
 
@@ -90,6 +118,8 @@ az webapp create \
 
 ## Integration Steps
 
+**Note**: The following Dockerfiles use the pre-built libraries from the knapsack repository's `knapsack-library/lib/` directory. No need to build the knapsack libraries—just copy them from the checked-out repo. This simplifies the build and eliminates the need for multi-stage Docker builds or CUDA toolkit installation during the go-chariot build.
+
 ### Step 1: Dockerfile for go-chariot
 
 #### Option A: CPU-Only (Cost-Effective)
@@ -97,10 +127,7 @@ az webapp create \
 Create `infrastructure/docker/go-chariot/Dockerfile.cpu` in the chariot-ecosystem repository:
 
 ```dockerfile
-# Stage 1: Get CPU-only knapsack library
-FROM knapsack-linux-cpu AS knapsack-lib
-
-# Stage 2: Build go-chariot with CGO
+# Build go-chariot with CGO
 FROM golang:1.21 AS builder
 
 # Install minimal build dependencies for CGO
@@ -108,9 +135,9 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy CPU-only library and header (no GPU!)
-COPY --from=knapsack-lib /lib/libknapsack_cpu.a /usr/local/lib/
-COPY --from=knapsack-lib /include/knapsack_cpu.h /usr/local/include/
+# Copy CPU-only library and header from knapsack repo
+COPY knapsack/knapsack-library/lib/linux-cpu/libknapsack_cpu.a /usr/local/lib/
+COPY knapsack/knapsack-library/lib/linux-cpu/knapsack_cpu.h /usr/local/include/
 
 # Enable CGO and set compiler flags
 ENV CGO_ENABLED=1
@@ -154,10 +181,7 @@ ENTRYPOINT ["/usr/local/bin/go-chariot"]
 Create `infrastructure/docker/go-chariot/Dockerfile.cuda` in the chariot-ecosystem repository:
 
 ```dockerfile
-# Stage 1: Get CUDA knapsack library
-FROM knapsack-linux-cuda AS knapsack-lib
-
-# Stage 2: Build go-chariot with CGO
+# Build go-chariot with CGO
 FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
 
 # Install Go
@@ -172,9 +196,9 @@ RUN wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz && \
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# Copy CUDA library and header
-COPY --from=knapsack-lib /lib/libknapsack_cuda.a /usr/local/lib/
-COPY --from=knapsack-lib /include/knapsack_cuda.h /usr/local/include/
+# Copy CUDA library and header from knapsack repo
+COPY knapsack/knapsack-library/lib/linux-cuda/libknapsack_cuda.a /usr/local/lib/
+COPY knapsack/knapsack-library/lib/linux-cuda/knapsack_cuda.h /usr/local/include/
 
 # Enable CGO and set compiler flags for CUDA
 ENV CGO_ENABLED=1
@@ -446,6 +470,8 @@ docker-build-knapsack-cuda:
 ```
 
 ### Step 4: Build and Test
+
+**Note**: These builds simply copy the pre-built knapsack libraries from the `knapsack/knapsack-library/lib/` directory. Make sure you have the knapsack repository checked out alongside chariot-ecosystem (or adjust the COPY paths in the Dockerfiles accordingly).
 
 #### CPU-Only Build
 

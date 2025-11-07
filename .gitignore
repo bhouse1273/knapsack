@@ -25,6 +25,10 @@
 *.a
 *.lib
 
+# EXCEPTION: Keep pre-built platform-specific library files
+!knapsack-library/lib/**/*.a
+!knapsack-library/lib/**/*.h
+
 # Executables
 *.exe
 *.out
@@ -46,6 +50,10 @@ release/
 bin/
 lib/
 obj/
+
+# EXCEPTION: Keep pre-built platform-specific libraries
+!knapsack-library/lib/
+!knapsack-library/lib/**
 
 # CMake
 CMakeFiles/

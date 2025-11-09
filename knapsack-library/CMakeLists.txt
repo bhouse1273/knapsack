@@ -39,6 +39,7 @@ list(APPEND LIB_SOURCES
   "${PROJ_ROOT}/src/v2/EvalCPU.cpp"
   "${PROJ_ROOT}/src/v2/BeamSearch.cpp"
   "${PROJ_ROOT}/src/v2/Preprocess.cpp"
+  "${PROJ_ROOT}/src/v2/Config_validate.cpp"
 )
 
 # Add Metal bridge (Objective-C++) on Apple

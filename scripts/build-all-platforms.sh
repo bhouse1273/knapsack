@@ -27,7 +27,7 @@ echo "====================================="
 echo "1. Building Linux CPU Library"
 echo "====================================="
 cd "$PROJECT_ROOT"
-docker build -f docker/Dockerfile.linux-cpu --target builder -t knapsack-linux-cpu-builder .
+docker build --platform linux/amd64 -f docker/Dockerfile.linux-cpu --target builder -t knapsack-linux-cpu-builder .
 
 echo "Extracting Linux CPU library..."
 CONTAINER_ID=$(docker create knapsack-linux-cpu-builder)
@@ -41,7 +41,7 @@ echo ""
 echo "====================================="
 echo "2. Building Linux CUDA Library"
 echo "====================================="
-docker build -f docker/Dockerfile.linux-cuda --target builder -t knapsack-linux-cuda-builder .
+docker build --platform linux/amd64 -f docker/Dockerfile.linux-cuda --target builder -t knapsack-linux-cuda-builder .
 
 echo "Extracting Linux CUDA library..."
 CONTAINER_ID=$(docker create knapsack-linux-cuda-builder)

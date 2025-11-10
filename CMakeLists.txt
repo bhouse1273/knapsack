@@ -159,6 +159,34 @@ if(APPLE AND USE_METAL)
   target_link_libraries(v2_metal_parity_sanity PRIVATE "-framework Foundation" "-framework Metal")
 endif()
 
+# ---- Benchmark: CPU vs Metal performance tool ----
+set(BENCHMARK_SOURCES tools/benchmark_cpu_vs_metal.cpp src/v2/EvalCPU.cpp src/v2/Data.cpp)
+if(APPLE AND USE_METAL)
+  list(APPEND BENCHMARK_SOURCES src/v2/Config.mm src/v2/EvalMetal.mm kernels/metal/metal_api.mm)
+else()
+  list(APPEND BENCHMARK_SOURCES src/v2/Config_json.cpp)
+endif()
+add_executable(benchmark_cpu_vs_metal ${BENCHMARK_SOURCES})
+target_include_directories(benchmark_cpu_vs_metal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/kernels/metal ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+if(APPLE AND USE_METAL)
+  target_compile_options(benchmark_cpu_vs_metal PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(benchmark_cpu_vs_metal PRIVATE "-framework Foundation" "-framework Metal")
+endif()
+
+# ---- Benchmark: Batch CPU vs Metal (where GPU wins!) ----
+set(BATCH_BENCHMARK_SOURCES tools/benchmark_batch_cpu_vs_metal.cpp src/v2/EvalCPU.cpp src/v2/Data.cpp)
+if(APPLE AND USE_METAL)
+  list(APPEND BATCH_BENCHMARK_SOURCES src/v2/Config.mm src/v2/EvalMetal.mm kernels/metal/metal_api.mm)
+else()
+  list(APPEND BATCH_BENCHMARK_SOURCES src/v2/Config_json.cpp)
+endif()
+add_executable(benchmark_batch_cpu_vs_metal ${BATCH_BENCHMARK_SOURCES})
+target_include_directories(benchmark_batch_cpu_vs_metal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/kernels/metal ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+if(APPLE AND USE_METAL)
+  target_compile_options(benchmark_batch_cpu_vs_metal PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(benchmark_batch_cpu_vs_metal PRIVATE "-framework Foundation" "-framework Metal")
+endif()
+
 # ---- V2 Assign-mode parity sanity ----
 set(V2_ASSIGN_SANITY_SOURCES tools/v2_assign_sanity.cpp src/v2/EvalCPU.cpp src/v2/Data.cpp)
 if(APPLE AND USE_METAL)
@@ -270,3 +298,11 @@ if(BUILD_PYTHON_BINDINGS)
   install(TARGETS knapsack_py LIBRARY DESTINATION .)
 endif()
 
+# ---- Testing ----
+option(BUILD_TESTS "Build unit tests with Catch2" ON)
+
+if(BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests/v2)
+  message(STATUS "Unit tests enabled - run 'make test' or 'ctest' to execute")
+endif()

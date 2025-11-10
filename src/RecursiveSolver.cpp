@@ -11,7 +11,11 @@
 #include <random>
 #include "InputModule.h"
 #include "RouteUtils.h" // for shared haversine
-#include "metal_api.h"  // kernels/metal (exposed via CMake include dirs)
+
+// Metal API (only available on Apple)
+#ifdef __APPLE__
+#include "metal_api.h"
+#endif
 
 namespace {
 // Initialize Metal evaluator once per process, reading shader source at runtime.

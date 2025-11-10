@@ -13,8 +13,10 @@
 #include <stdexcept>
 #include <random>
 
-// Metal C API (available on Apple; headers present regardless)
+// Metal C API (only available on Apple with Metal support enabled)
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
 #include "metal_api.h"
+#endif
 
 extern "C" {
 
@@ -80,6 +82,8 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
 
             // Evaluate with Metal if available, else skip to CPU greedy
             std::vector<float> obj(num_candidates, 0.0f), pen(num_candidates, 0.0f);
+            bool used_metal = false;
+#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
             MetalEvalIn in{};
             in.candidates = cand.data();
             in.num_items = num_items;
@@ -92,8 +96,6 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             in.penalty_power = 1.0f;
             MetalEvalOut out{ obj.data(), pen.data() };
 
-            bool used_metal = false;
-#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
             // If Metal was initialized earlier, this should succeed.
             if (knapsack_metal_eval(&in, &out, nullptr, 0) == 0) {
                 used_metal = true;

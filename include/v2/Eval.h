@@ -42,4 +42,18 @@ bool EvaluateCPU_Select(const Config& cfg, const HostSoA& soa,
 bool EvaluateCPU_Assign(const Config& cfg, const HostSoA& soa,
                         const CandidateAssign& cand, EvalResult* out, std::string* err);
 
+#ifdef __APPLE__
+// Evaluate a candidate in select mode using Metal GPU.
+// Requires Metal framework initialization via knapsack_metal_init_from_source().
+bool EvaluateMetal_Select(const Config& cfg, const HostSoA& soa,
+                          const CandidateSelect& cand, EvalResult* out, std::string* err);
+
+// Evaluate multiple candidates in parallel using Metal GPU.
+// This is where GPU acceleration shines - evaluating many candidates simultaneously.
+// Expected speedup over CPU: 2-50x for batches of 100-10,000 candidates.
+bool EvaluateMetal_Batch(const Config& cfg, const HostSoA& soa,
+                         const std::vector<CandidateSelect>& candidates,
+                         std::vector<EvalResult>* results, std::string* err);
+#endif
+
 } // namespace v2

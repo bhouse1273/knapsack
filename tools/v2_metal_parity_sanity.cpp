@@ -7,7 +7,11 @@
 #include "v2/Config.h"
 #include "v2/Data.h"
 #include "v2/Eval.h"
-#include "metal_api.h" // kernels/metal API
+
+// Metal API (only available on Apple)
+#ifdef __APPLE__
+#include "metal_api.h"
+#endif
 
 static int fail(const std::string& msg) { std::cerr << "FAIL: " << msg << "\n"; return 1; }
 static bool approx(double a, double b, double eps=1e-4) { return std::fabs(a-b) <= eps; }

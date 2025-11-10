@@ -1,1 +1,0 @@
-{ "beam_width": 16, "iters": 3, "seed": 7, "debug": true, "dom_enable": true, "dom_eps": 1e-9, "dom_surrogate": false }

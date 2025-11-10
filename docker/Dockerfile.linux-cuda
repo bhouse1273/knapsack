@@ -1,0 +1,52 @@
+# CUDA GPU-accelerated build for Linux NVIDIA GPUs
+# Produces libknapsack_cuda.a for deployment on GPU-enabled Azure VMs
+
+FROM nvidia/cuda:12.6.0-devel-ubuntu22.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    curl \
+    libstdc++-11-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy source code
+COPY . /build/knapsack
+
+# Download picojson
+RUN mkdir -p /build/knapsack/third_party/picojson && \
+    curl -fsSL -o /build/knapsack/third_party/picojson/picojson.h \
+      https://raw.githubusercontent.com/kazuho/picojson/master/picojson.h
+
+# Verify picojson
+RUN test -f /build/knapsack/third_party/picojson/picojson.h || \
+    (echo "ERROR: picojson.h not found!" && exit 1)
+
+# Build CUDA-accelerated library
+RUN cd /build/knapsack/knapsack-library && \
+    rm -rf build && mkdir -p build && cd build && \
+    echo "=== Building CUDA-accelerated knapsack library ===" && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_CUDA=ON \
+        -DUSE_METAL=OFF \
+        -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" && \
+    cmake --build . --target knapsack -j$(nproc) && \
+    echo "=== Installing library and header ===" && \
+    cp libknapsack_cuda.a /usr/local/lib/libknapsack_cuda.a && \
+    cp ../include/knapsack_c.h /usr/local/include/knapsack_cuda.h && \
+    ls -lh /usr/local/lib/libknapsack_cuda.a /usr/local/include/knapsack_cuda.h
+
+# Verify CUDA library
+RUN echo "=== CUDA library built successfully ===" && \
+    nm /usr/local/lib/libknapsack_cuda.a | grep -i cuda && \
+    echo "✓ CUDA symbols found (as expected)"
+
+# Create minimal artifact image
+FROM scratch AS artifacts
+COPY --from=builder /usr/local/lib/libknapsack_cuda.a /lib/libknapsack_cuda.a
+COPY --from=builder /usr/local/include/knapsack_cuda.h /include/knapsack_cuda.h

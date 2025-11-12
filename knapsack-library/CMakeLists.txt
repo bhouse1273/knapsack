@@ -60,8 +60,14 @@ add_library(knapsack STATIC ${LIB_SOURCES})
 
 # Set platform-specific output name
 if(BUILD_CPU_ONLY)
-  set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_cpu")
-  message(STATUS "Library output name: libknapsack_cpu.a")
+  if(APPLE)
+    # On macOS, emit a distinct CPU-only artifact name to avoid confusion with Linux
+    set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_macos_cpu")
+    message(STATUS "Library output name: libknapsack_macos_cpu.a")
+  else()
+    set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_cpu")
+    message(STATUS "Library output name: libknapsack_cpu.a")
+  endif()
 elseif(BUILD_CUDA)
   set_target_properties(knapsack PROPERTIES OUTPUT_NAME "knapsack_cuda")
   message(STATUS "Library output name: libknapsack_cuda.a")

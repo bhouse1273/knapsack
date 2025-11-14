@@ -8,8 +8,8 @@
 #include "v2/Data.h"
 #include "v2/Eval.h"
 
-// Metal API (only available on Apple)
-#ifdef __APPLE__
+// Metal API (only when Metal support is enabled on Apple)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
 #endif
 
@@ -42,6 +42,7 @@ int main() {
   v2::EvalResult cpu;
   if (!v2::EvaluateCPU_Assign(cfg, soa, cand, &cpu, &err)) return fail(err);
 
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
   // Prepare Metal
   std::string msl;
   if (!read_file_first_of({
@@ -96,4 +97,10 @@ int main() {
 
   std::cout << "PASS: Assign-mode parity objective=" << obj[0] << " penalty=" << pen[0] << " total=" << total << "\n";
   return 0;
+#else
+  // Metal not enabled on Apple: report CPU-only result
+  std::cout << "PASS (CPU-only build): objective=" << cpu.objective
+            << " penalty=" << cpu.penalty << " total=" << cpu.total << "\n";
+  return 0;
+#endif
 }

@@ -12,8 +12,8 @@
 #include "InputModule.h"
 #include "RouteUtils.h" // for shared haversine
 
-// Metal API (only available on Apple)
-#ifdef __APPLE__
+// Metal API (only available on Apple with Metal enabled)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
 #endif
 
@@ -21,7 +21,7 @@ namespace {
 // Initialize Metal evaluator once per process, reading shader source at runtime.
 bool g_metal_ready = false;
 void ensure_metal_ready() {
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
     if (g_metal_ready) return;
     const char* candidate_paths[] = {
         "../kernels/metal/shaders/eval_block_candidates.metal",
@@ -138,7 +138,7 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
         }
     }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
     ensure_metal_ready();
     if (g_metal_ready) {
         // Build candidates: start with greedy, then random variations

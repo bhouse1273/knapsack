@@ -1,5 +1,2 @@
-cp linux-cpu/* /usr/local/lib/
-cp linux-cuda/* /usr/local/lib/
-cp macos-cpu/* /usr/local/lib/
-cp macos-metal/* /usr/local/lib/
+cp -r lib /usr/local/
 ls -la /usr/local/lib

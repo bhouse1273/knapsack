@@ -16,7 +16,7 @@
 #include <string>
 
 // Metal API (only available on Apple with Metal support enabled)
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
 #endif
 
@@ -139,7 +139,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
 
   // Prepare Metal pipeline
   bool useMetal = false;
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
   std::string msl;
   if (read_file_first_of({
         "../kernels/metal/shaders/eval_block_candidates.metal",
@@ -161,8 +161,8 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     objAttrFlat.resize((size_t)T * (size_t)N);
     for (int t = 0; t < T; ++t) {
       objW[t] = (float)cfg.objective[t].weight;
-  auto itA = soaF.attr.find(cfg.objective[t].attr);
-      if (itA != soa.attr.end()) {
+      auto itA = soaF.attr.find(cfg.objective[t].attr);
+      if (itA != soaF.attr.end()) {
         for (int i = 0; i < N; ++i) objAttrFlat[(size_t)t * (size_t)N + (size_t)i] = (float)itA->second[i];
       }
     }
@@ -180,8 +180,8 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     for (int j = 0; j < C; ++j) {
       const auto& c = cfg.constraints[consIdx[j]];
       consLimits[j] = (float)c.limit; consW[j] = (float)c.penalty.weight; consP[j] = (float)c.penalty.power;
-  auto itCA = soaF.attr.find(c.attr);
-      if (itCA != soa.attr.end()) {
+      auto itCA = soaF.attr.find(c.attr);
+      if (itCA != soaF.attr.end()) {
         for (int i = 0; i < N; ++i) consAttrFlat[(size_t)j * (size_t)N + (size_t)i] = (float)itCA->second[i];
       }
     }
@@ -257,7 +257,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
     // Evaluate
     const int M = (int)cand.size();
     std::vector<float> obj(M, 0.0f), pen(M, 0.0f);
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
     if (useMetal) {
       auto packed = pack2bit(cand, N);
       const int bytes_per = (N + 3) / 4;
@@ -327,7 +327,7 @@ bool SolveBeamSelect(const Config& cfg, const HostSoA& soa, const SolverOptions&
   // Final best
   std::vector<float> obj(beam.size(), 0.0f), pen(beam.size(), 0.0f);
   bool useMetalFinal = false;
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
   useMetalFinal = true;
   if (useMetalFinal) {
     auto packed = pack2bit(beam, N);

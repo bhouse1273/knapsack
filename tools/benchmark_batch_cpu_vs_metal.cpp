@@ -6,12 +6,13 @@
 #include <vector>
 #include <random>
 #include <iomanip>
+#include <fstream>
 
 #include "v2/Config.h"
 #include "v2/Data.h"
 #include "v2/Eval.h"
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
 #include <fstream>
 #endif
@@ -105,7 +106,7 @@ int main(int argc, char** argv) {
     auto cpu_end = high_resolution_clock::now();
     double cpu_time_ms = duration_cast<microseconds>(cpu_end - cpu_start).count() / 1000.0;
     
-#ifdef __APPLE__
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
     // Initialize Metal
     std::cout << "Initializing Metal GPU...\n";
     std::string shader;

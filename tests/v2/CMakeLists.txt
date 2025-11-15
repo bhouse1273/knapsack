@@ -31,8 +31,8 @@ target_include_directories(test_eval_cpu PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_eval_cpu PRIVATE catch2 knapsack)
 target_compile_features(test_eval_cpu PRIVATE cxx_std_17)
 
-# Test executable for Metal Evaluation (Apple only)
-if(APPLE)
+# Test executable for Metal Evaluation (Apple + Metal only)
+if(APPLE AND USE_METAL)
     set(TEST_METAL_SOURCES test_eval_metal.cpp)
     add_executable(test_eval_metal ${TEST_METAL_SOURCES})
     target_include_directories(test_eval_metal PRIVATE 
@@ -55,7 +55,7 @@ add_test(NAME config_validate COMMAND test_config_validate)
 add_test(NAME beam_search COMMAND test_beam_search)
 add_test(NAME eval_cpu COMMAND test_eval_cpu)
 
-if(APPLE)
+if(APPLE AND USE_METAL)
     add_test(NAME eval_metal COMMAND test_eval_metal)
     set_tests_properties(eval_metal PROPERTIES
         LABELS "v2;eval;metal;gpu"
@@ -81,7 +81,7 @@ set_tests_properties(eval_cpu PROPERTIES
 )
 
 # Custom target to build all tests
-if(APPLE)
+if(APPLE AND USE_METAL)
     add_custom_target(build_tests
         DEPENDS test_config_validate test_beam_search test_eval_cpu test_eval_metal
     )

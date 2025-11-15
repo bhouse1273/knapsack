@@ -12,9 +12,12 @@ lib/
 ├── linux-cuda/             # Linux with NVIDIA CUDA (631KB)
 │   ├── libknapsack_cuda.a
 │   └── knapsack_cuda.h
-└── macos-metal/            # macOS with Metal GPU (216KB)
-    ├── libknapsack_metal.a
-    └── knapsack_metal.h
+├── macos-metal/            # macOS with Metal GPU (216KB)
+│   ├── libknapsack_metal.a
+│   └── knapsack_macos_metal.h
+└── macos-cpu/              # macOS CPU-only (Apple Silicon)
+  ├── libknapsack_macos_cpu.a
+  └── knapsack_macos_cpu.h
 ```
 
 ## Platform Details
@@ -51,6 +54,16 @@ lib/
 - **Use Case**: Development and testing on Apple Silicon
 - **Build Flags**: `-DUSE_METAL=ON`
 
+### macOS CPU-only (`macos-cpu/`)
+- **Library**: `libknapsack_macos_cpu.a`
+- **Header**: `knapsack_cpu.h`
+- **Compiler**: Clang (Apple Silicon)
+- **Architecture**: arm64 (M1/M2/M3)
+- **GPU Support**: None
+- **Dependencies**: libstdc++
+- **Use Case**: Fastest option on Apple Silicon for tested datasets
+- **Build Flags**: `-DBUILD_CPU_ONLY=ON`, `-DUSE_METAL=OFF`
+
 ## Verification
 
 Verify the libraries are correctly built:
@@ -61,7 +74,7 @@ make verify-libs
 ```
 
 This checks:
-- All three libraries exist
+- All four libraries exist (macOS Metal and macOS CPU are optional on non-macOS)
 - File sizes are reasonable
 - CPU library has no GPU symbols
 - CUDA library contains CUDA symbols
@@ -82,14 +95,18 @@ COPY knapsack/knapsack-library/lib/linux-cuda/knapsack_cuda.h /usr/local/include
 
 # Metal (macOS)
 COPY knapsack/knapsack-library/lib/macos-metal/libknapsack_metal.a /usr/local/lib/
-COPY knapsack/knapsack-library/lib/macos-metal/knapsack_metal.h /usr/local/include/
+COPY knapsack/knapsack-library/lib/macos-metal/knapsack_macos_metal.h /usr/local/include/
+
+# macOS CPU-only
+COPY knapsack/knapsack-library/lib/macos-cpu/libknapsack_macos_cpu.a /usr/local/lib/
+COPY knapsack/knapsack-library/lib/macos-cpu/knapsack_macos_cpu.h /usr/local/include/
 ```
 
 See [GO_CHARIOT_INTEGRATION.md](../../docs/GO_CHARIOT_INTEGRATION.md) for complete integration instructions.
 
 ## Rebuilding Libraries
 
-If you modify the C++ source code, you can rebuild all three libraries:
+If you modify the C++ source code, you can rebuild all platform libraries:
 
 ```bash
 # From the knapsack root directory
@@ -100,8 +117,9 @@ This script:
 1. Builds Linux CPU library via Docker
 2. Builds Linux CUDA library via Docker (requires nvidia-docker for verification)
 3. Builds macOS Metal library natively (on macOS only)
-4. Extracts all libraries to this directory
-5. Verifies each library's symbols
+4. Builds macOS CPU-only library natively (on macOS only)
+5. Extracts all libraries to this directory
+6. Verifies each library's symbols
 
 **Note**: The script runs on M1 Mac via Docker emulation for Linux builds. CUDA builds work without requiring CUDA hardware on the build machine.
 
@@ -118,7 +136,7 @@ This script:
 
 ### CMake Configuration
 The root `CMakeLists.txt` automatically sets the output library name based on build flags:
-- `BUILD_CPU_ONLY=ON` → `libknapsack_cpu.a`
+- `BUILD_CPU_ONLY=ON` → `libknapsack_cpu.a` (Linux) or `libknapsack_macos_cpu.a` (macOS)
 - `BUILD_CUDA=ON` → `libknapsack_cuda.a`
 - `USE_METAL=ON` → `libknapsack_metal.a`
 

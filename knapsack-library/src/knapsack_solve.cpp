@@ -14,7 +14,7 @@
 #include <random>
 
 // Metal C API (only available on Apple with Metal support enabled)
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
 #endif
 
@@ -83,7 +83,7 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             // Evaluate with Metal if available, else skip to CPU greedy
             std::vector<float> obj(num_candidates, 0.0f), pen(num_candidates, 0.0f);
             bool used_metal = false;
-#if defined(__APPLE__) && !defined(KNAPSACK_CPU_ONLY)
+#if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
             MetalEvalIn in{};
             in.candidates = cand.data();
             in.num_items = num_items;
@@ -139,12 +139,7 @@ KnapsackSolution* solve_knapsack(const char* csv_path, int target_team_size) {
             while (cursor < (int)entities.size() && picked[cursor]) cursor++;
         }
 
-    // Try to initialize Metal on Apple Silicon; if available, we'll use it in later passes.
-    // This is a no-op on non-Apple builds.
-    extern int knapsack_metal_init_default();
-#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
-    (void)knapsack_metal_init_default();
-#endif
+    // Note: Metal initialization is handled by higher-level tools when needed.
 
     // Convert to C struct
         KnapsackSolution* solution = new KnapsackSolution;

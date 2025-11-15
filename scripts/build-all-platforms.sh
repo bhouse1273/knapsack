@@ -15,12 +15,14 @@ echo "Creating library directories..."
 mkdir -p "$LIB_DIR/linux-cpu"
 mkdir -p "$LIB_DIR/linux-cuda"
 mkdir -p "$LIB_DIR/macos-metal"
+mkdir -p "$LIB_DIR/macos-cpu"
 
 # Clean old libraries
 echo "Cleaning old libraries..."
 rm -f "$LIB_DIR"/linux-cpu/*.a "$LIB_DIR"/linux-cpu/*.h
 rm -f "$LIB_DIR"/linux-cuda/*.a "$LIB_DIR"/linux-cuda/*.h
 rm -f "$LIB_DIR"/macos-metal/*.a "$LIB_DIR"/macos-metal/*.h
+rm -f "$LIB_DIR"/macos-cpu/*.a "$LIB_DIR"/macos-cpu/*.h
 
 echo ""
 echo "====================================="
@@ -32,7 +34,7 @@ docker build --platform linux/amd64 -f docker/Dockerfile.linux-cpu --target buil
 echo "Extracting Linux CPU library..."
 CONTAINER_ID=$(docker create knapsack-linux-cpu-builder)
 docker cp "$CONTAINER_ID:/usr/local/lib/libknapsack_cpu.a" "$LIB_DIR/linux-cpu/"
-docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cpu.h" "$LIB_DIR/linux-cpu/"
+docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cpu.h" "$LIB_DIR/linux-cpu/knapsack_cpu.h"
 docker rm "$CONTAINER_ID"
 
 echo "✅ Linux CPU library: $(ls -lh $LIB_DIR/linux-cpu/libknapsack_cpu.a | awk '{print $5}')"
@@ -46,7 +48,7 @@ docker build --platform linux/amd64 -f docker/Dockerfile.linux-cuda --target bui
 echo "Extracting Linux CUDA library..."
 CONTAINER_ID=$(docker create knapsack-linux-cuda-builder)
 docker cp "$CONTAINER_ID:/usr/local/lib/libknapsack_cuda.a" "$LIB_DIR/linux-cuda/"
-docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cuda.h" "$LIB_DIR/linux-cuda/"
+docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cuda.h" "$LIB_DIR/linux-cuda/knapsack_cuda.h"
 docker rm "$CONTAINER_ID"
 
 echo "✅ Linux CUDA library: $(ls -lh $LIB_DIR/linux-cuda/libknapsack_cuda.a | awk '{print $5}')"
@@ -66,12 +68,35 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     
     echo "Copying macOS Metal library..."
     cp libknapsack_metal.a "$LIB_DIR/macos-metal/"
-    cp ../include/knapsack_c.h "$LIB_DIR/macos-metal/knapsack_metal.h"
+    cp ../include/knapsack_c.h "$LIB_DIR/macos-metal/knapsack_macos_metal.h"
     
     echo "✅ macOS Metal library: $(ls -lh $LIB_DIR/macos-metal/libknapsack_metal.a | awk '{print $5}')"
 else
     echo "⚠️  Skipping macOS Metal build (not on macOS)"
     echo "   To build Metal library, run this script on a Mac"
+fi
+
+echo ""
+echo "====================================="
+echo "4. Building macOS CPU-only Library"
+echo "====================================="
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Building CPU-only natively on macOS..."
+    cd "$PROJECT_ROOT/knapsack-library"
+    rm -rf build-macos-cpu
+    mkdir -p build-macos-cpu
+    cd build-macos-cpu
+    cmake .. -DBUILD_CPU_ONLY=ON -DUSE_METAL=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake --build . --target knapsack -j$(sysctl -n hw.ncpu)
+
+    echo "Copying macOS CPU library..."
+    # CMake outputs libknapsack_macos_cpu.a on macOS CPU-only builds
+    cp libknapsack_macos_cpu.a "$LIB_DIR/macos-cpu/"
+    cp ../include/knapsack_c.h "$LIB_DIR/macos-cpu/knapsack_macos_cpu.h"
+
+    echo "✅ macOS CPU library: $(ls -lh $LIB_DIR/macos-cpu/libknapsack_macos_cpu.a | awk '{print $5}')"
+else
+    echo "⚠️  Skipping macOS CPU build (not on macOS)"
 fi
 
 echo ""
@@ -101,6 +126,13 @@ if [ -f "$LIB_DIR/macos-metal/libknapsack_metal.a" ]; then
     echo "✅ macos-metal/libknapsack_metal.a ($SIZE)"
 else
     echo "⚠️  macos-metal/libknapsack_metal.a (not built - run on macOS)"
+fi
+
+if [ -f "$LIB_DIR/macos-cpu/libknapsack_macos_cpu.a" ]; then
+    SIZE=$(ls -lh "$LIB_DIR/macos-cpu/libknapsack_macos_cpu.a" | awk '{print $5}')
+    echo "✅ macos-cpu/libknapsack_macos_cpu.a ($SIZE)"
+else
+    echo "⚠️  macos-cpu/libknapsack_macos_cpu.a (not built - run on macOS)"
 fi
 
 echo ""
@@ -133,6 +165,15 @@ if [ -f "$LIB_DIR/macos-metal/libknapsack_metal.a" ]; then
         echo "✅ Metal library verified: Contains Metal symbols"
     else
         echo "⚠️  WARNING: Metal library may not contain Metal symbols"
+    fi
+fi
+
+# Verify no Metal symbols in macOS CPU-only library
+if [ -f "$LIB_DIR/macos-cpu/libknapsack_macos_cpu.a" ]; then
+    if nm "$LIB_DIR/macos-cpu/libknapsack_macos_cpu.a" 2>/dev/null | grep -qi "metal"; then
+        echo "❌ WARNING: macOS CPU library contains Metal symbols!"
+    else
+        echo "✅ macOS CPU library verified: No Metal symbols"
     fi
 fi
 

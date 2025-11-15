@@ -304,6 +304,22 @@ if(APPLE AND USE_METAL)
   target_link_libraries(v2_scout_demo PRIVATE "-framework Foundation" "-framework Metal")
 endif()
 
+# ---- NBA Beam example (select-mode) ----
+set(NBA_BEAM_EXAMPLE_SOURCES tools/nba_beam_example.cpp src/v2/EvalCPU.cpp src/v2/Data.cpp)
+if(APPLE AND USE_METAL)
+  list(APPEND NBA_BEAM_EXAMPLE_SOURCES src/v2/Config.mm src/v2/EvalMetal.mm kernels/metal/metal_api.mm)
+else()
+  list(APPEND NBA_BEAM_EXAMPLE_SOURCES src/v2/Config_json.cpp src/v2/Config_validate.cpp)
+endif()
+add_executable(nba_beam_example ${NBA_BEAM_EXAMPLE_SOURCES})
+target_include_directories(nba_beam_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/kernels/metal ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+target_include_directories(nba_beam_example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if(APPLE AND USE_METAL)
+  target_compile_definitions(nba_beam_example PRIVATE KNAPSACK_METAL_SUPPORT)
+  target_compile_options(nba_beam_example PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(nba_beam_example PRIVATE "-framework Foundation" "-framework Metal")
+endif()
+
 # ---- Python bindings ----
 option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)
 

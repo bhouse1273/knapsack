@@ -31,6 +31,15 @@ target_include_directories(test_eval_cpu PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_eval_cpu PRIVATE catch2 knapsack)
 target_compile_features(test_eval_cpu PRIVATE cxx_std_17)
 
+# Test executable for RL API
+add_executable(test_rl_api test_rl_api.cpp)
+target_include_directories(test_rl_api PRIVATE ${TEST_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/../../rl)
+target_link_libraries(test_rl_api PRIVATE catch2 rl_support)
+target_compile_features(test_rl_api PRIVATE cxx_std_17)
+if(BUILD_ONNX)
+  target_compile_definitions(test_rl_api PRIVATE RL_ONNX_ENABLED)
+endif()
+
 # Test executable for Metal Evaluation (Apple + Metal only)
 if(APPLE AND USE_METAL)
     set(TEST_METAL_SOURCES test_eval_metal.cpp)
@@ -54,6 +63,7 @@ enable_testing()
 add_test(NAME config_validate COMMAND test_config_validate)
 add_test(NAME beam_search COMMAND test_beam_search)
 add_test(NAME eval_cpu COMMAND test_eval_cpu)
+add_test(NAME rl_api COMMAND test_rl_api)
 
 if(APPLE AND USE_METAL)
     add_test(NAME eval_metal COMMAND test_eval_metal)
@@ -80,14 +90,19 @@ set_tests_properties(eval_cpu PROPERTIES
     TIMEOUT 60
 )
 
+set_tests_properties(rl_api PROPERTIES
+    LABELS "v2;rl"
+    TIMEOUT 60
+)
+
 # Custom target to build all tests
 if(APPLE AND USE_METAL)
     add_custom_target(build_tests
-        DEPENDS test_config_validate test_beam_search test_eval_cpu test_eval_metal
+        DEPENDS test_config_validate test_beam_search test_eval_cpu test_rl_api test_eval_metal
     )
 else()
     add_custom_target(build_tests
-        DEPENDS test_config_validate test_beam_search test_eval_cpu
+        DEPENDS test_config_validate test_beam_search test_eval_cpu test_rl_api
     )
 endif()
 
@@ -102,6 +117,7 @@ message(STATUS "Configured v2 tests:")
 message(STATUS "  - test_config_validate")
 message(STATUS "  - test_beam_search")
 message(STATUS "  - test_eval_cpu")
+message(STATUS "  - test_rl_api")
 if(APPLE)
     message(STATUS "  - test_eval_metal (Metal GPU)")
 endif()

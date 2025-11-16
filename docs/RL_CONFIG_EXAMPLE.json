@@ -1,0 +1,8 @@
+{
+  "w_rl": 1.0,
+  "alpha": 0.3,
+  "feat_dim": 12,
+  "model_path": "models/nba_scorer.onnx",
+  "model_input": "input",
+  "model_output": "output"
+}

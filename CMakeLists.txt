@@ -12,6 +12,52 @@ option(BUILD_CUDA "Build with CUDA (NVIDIA/Jetson only)" OFF)
 option(USE_METAL "Enable Metal backend on Apple" ON)
 option(LINK_INSTALLED_LIBKNAPSACK "Link against an installed libknapsack (avoids embedding code twice)" OFF)
 option(BUILD_LIB "Build and install knapsack static library and V2 CLI" ON)
+option(BUILD_ONNX "Build RL support with ONNX Runtime inference (requires onnxruntime)" OFF)
+
+if(BUILD_ONNX)
+  message(STATUS "ONNX Runtime support enabled for RL")
+  include(FetchContent)
+  # Use prebuilt ONNX Runtime for macOS/Linux
+  # For production: download release binaries or use find_package if installed
+  # Here we'll use a minimal approach: expect user to install onnxruntime via brew/apt or provide path
+  # Alternative: FetchContent can download prebuilt releases
+  find_package(onnxruntime QUIET)
+  if(NOT onnxruntime_FOUND)
+    message(STATUS "ONNX Runtime not found via find_package; attempting manual locate")
+    # Fallback: check common brew path on macOS
+    if(APPLE)
+      set(ONNXRUNTIME_INCLUDE_DIR "/opt/homebrew/include" CACHE PATH "ONNX Runtime include dir")
+      set(ONNXRUNTIME_LIB_DIR "/opt/homebrew/lib" CACHE PATH "ONNX Runtime lib dir")
+    else()
+      set(ONNXRUNTIME_INCLUDE_DIR "/usr/local/include" CACHE PATH "ONNX Runtime include dir")
+      set(ONNXRUNTIME_LIB_DIR "/usr/local/lib" CACHE PATH "ONNX Runtime lib dir")
+    endif()
+    # Check for ONNX Runtime headers (correct path for brew installation)
+    if(EXISTS "${ONNXRUNTIME_INCLUDE_DIR}/onnxruntime/onnxruntime_cxx_api.h")
+      message(STATUS "Found ONNX Runtime headers at ${ONNXRUNTIME_INCLUDE_DIR}")
+      set(ONNXRUNTIME_INCLUDE_DIRS ${ONNXRUNTIME_INCLUDE_DIR})
+      find_library(ONNXRUNTIME_LIBRARIES NAMES onnxruntime PATHS ${ONNXRUNTIME_LIB_DIR} NO_DEFAULT_PATH)
+      if(ONNXRUNTIME_LIBRARIES)
+        message(STATUS "Found ONNX Runtime library: ${ONNXRUNTIME_LIBRARIES}")
+      else()
+        message(FATAL_ERROR "ONNX Runtime library not found in ${ONNXRUNTIME_LIB_DIR}. Install via: brew install onnxruntime (macOS) or build from source.")
+      endif()
+    else()
+      message(FATAL_ERROR "ONNX Runtime headers not found at ${ONNXRUNTIME_INCLUDE_DIR}/onnxruntime/onnxruntime_cxx_api.h. Install ONNX Runtime or disable BUILD_ONNX.")
+    endif()
+  else()
+    message(STATUS "ONNX Runtime found via find_package")
+    # When using find_package, the imported target onnxruntime::onnxruntime provides include dirs and libs
+    # However, the target sets INTERFACE_INCLUDE_DIRECTORIES to .../include/onnxruntime
+    # We need .../include to use #include <onnxruntime/...> syntax
+    get_target_property(ONNX_IMPORT_LOCATION onnxruntime::onnxruntime LOCATION)
+    get_filename_component(ONNX_LIB_DIR "${ONNX_IMPORT_LOCATION}" DIRECTORY)
+    get_filename_component(ONNX_PREFIX "${ONNX_LIB_DIR}/.." ABSOLUTE)
+    set(ONNXRUNTIME_INCLUDE_DIRS "${ONNX_PREFIX}/include")
+    set(ONNXRUNTIME_LIBRARIES onnxruntime::onnxruntime)
+    message(STATUS "ONNX Runtime include dir: ${ONNXRUNTIME_INCLUDE_DIRS}")
+  endif()
+endif()
 
 if(APPLE AND USE_METAL)
   enable_language(OBJCXX)
@@ -319,6 +365,27 @@ if(APPLE AND USE_METAL)
   target_compile_options(nba_beam_example PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   target_link_libraries(nba_beam_example PRIVATE "-framework Foundation" "-framework Metal")
 endif()
+
+# ---- RL support libraries (static + shared for bindings) ----
+add_library(rl_support STATIC rl/rl_api.cpp)
+target_include_directories(rl_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/rl)
+if(BUILD_ONNX)
+  target_compile_definitions(rl_support PRIVATE RL_ONNX_ENABLED)
+  target_include_directories(rl_support PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
+  target_link_libraries(rl_support PRIVATE ${ONNXRUNTIME_LIBRARIES})
+endif()
+
+add_library(rl_support_shared SHARED rl/rl_api.cpp)
+target_include_directories(rl_support_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/rl)
+if(BUILD_ONNX)
+  target_compile_definitions(rl_support_shared PRIVATE RL_ONNX_ENABLED)
+  target_include_directories(rl_support_shared PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
+  target_link_libraries(rl_support_shared PRIVATE ${ONNXRUNTIME_LIBRARIES})
+endif()
+set_target_properties(rl_support_shared PROPERTIES OUTPUT_NAME "rl_support")
+
+# Link RL support into example (static preferred)
+target_link_libraries(nba_beam_example PRIVATE rl_support)
 
 # ---- Python bindings ----
 option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)

@@ -11,6 +11,7 @@
 #include "v2/Config.h"
 #include "v2/Data.h"
 #include "v2/Eval.h"
+#include "rl/rl_api.h"
 
 #if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
 #include "metal_api.h"
@@ -140,6 +141,24 @@ int main(int argc, char** argv) {
 
   // Scorer setup
   Context ctx; NBAScorer scorer; scorer.init_rl_scores(soa.count, 777);
+  // Load RL config JSON (example file or env override)
+  std::string rl_cfg_path = "docs/RL_CONFIG_EXAMPLE.json";
+  const char* env_cfg = std::getenv("RL_CONFIG_PATH");
+  if (env_cfg && *env_cfg) rl_cfg_path = env_cfg;
+  std::string rl_cfg_json = "{}";
+  {
+    std::ifstream rlf(rl_cfg_path);
+    if (rlf) rl_cfg_json.assign((std::istreambuf_iterator<char>(rlf)), std::istreambuf_iterator<char>());
+    else std::cerr << "Warning: RL config not found at " << rl_cfg_path << ", using defaults.\n";
+  }
+  // Initialize RL handle
+  char rl_err[256] = {0};
+  rl_handle_t rl = rl_init_from_json(rl_cfg_json.c_str(), rl_err, sizeof(rl_err));
+  if (!rl) {
+    std::cerr << "RL init failed: " << rl_err << " (continuing without RL)\n";
+  } else {
+    std::cout << "Loaded RL config from " << rl_cfg_path << "\n";
+  }
 
   // Seed beam
   std::mt19937 rng(1234);
@@ -170,14 +189,62 @@ int main(int argc, char** argv) {
 
     // Rank and prune
     vector<ScoredCand> scored; scored.reserve(expansions.size());
+    // Prepare raw candidate bit matrix for RL batch scoring (mode=0 select)
+    std::vector<unsigned char> cand_bits; cand_bits.reserve(expansions.size() * soa.count);
+    for (auto& c : expansions) cand_bits.insert(cand_bits.end(), c.select.begin(), c.select.end());
+    std::vector<double> rl_scores(expansions.size(), 0.0);
+    if (rl) {
+      // Parse feat_dim from rl_cfg_json (fallback 8)
+      static int rl_feat_dim = 8;
+      if (rl_feat_dim == 8) { // first use: attempt parse
+        size_t pos = rl_cfg_json.find("\"feat_dim\"");
+        if (pos != std::string::npos) {
+          pos = rl_cfg_json.find(':', pos);
+            if (pos != std::string::npos) {
+              ++pos; while (pos < rl_cfg_json.size() && std::isspace((unsigned char)rl_cfg_json[pos])) ++pos;
+              size_t end = pos;
+              while (end < rl_cfg_json.size() && (std::isdigit((unsigned char)rl_cfg_json[end]) || rl_cfg_json[end]=='+' || rl_cfg_json[end]=='-' )) ++end;
+              if (end > pos) {
+                try { rl_feat_dim = std::stoi(rl_cfg_json.substr(pos, end-pos)); } catch (...) { /* ignore */ }
+                if (rl_feat_dim <= 0) rl_feat_dim = 8;
+              }
+            }
+        }
+      }
+      std::vector<float> features(expansions.size() * rl_feat_dim);
+      char fe_err[128] = {0};
+      if (rl_prepare_features(rl, cand_bits.data(), soa.count, (int)expansions.size(), 0, features.data(), fe_err, sizeof(fe_err)) != 0) {
+        std::cerr << "rl_prepare_features failed: " << fe_err << "\n";
+      } else {
+        char sc_err[128] = {0};
+        if (rl_score_batch_with_features(rl, features.data(), rl_feat_dim, (int)expansions.size(), rl_scores.data(), sc_err, sizeof(sc_err)) != 0) {
+          std::cerr << "rl_score_batch_with_features failed: " << sc_err << "\n";
+          std::fill(rl_scores.begin(), rl_scores.end(), 0.0);
+        }
+      }
+    }
     for (size_t i = 0; i < expansions.size(); ++i) {
       ScoredCand sc{expansions[i], evals[i], 0.0};
-      sc.s = scorer.score(sc.c, sc.sim, ctx);
+      double sim_component = scorer.score(sc.c, sc.sim, ctx); // existing composite (sim+mock rl+rule)
+      double rl_component = rl_scores[i];
+      // Blend: weight existing composite heavily, add RL support term
+      sc.s = sim_component + 0.3 * rl_component;
       scored.push_back(std::move(sc));
     }
     std::partial_sort(scored.begin(), scored.begin() + std::min((size_t)K, scored.size()), scored.end(),
                       [](const ScoredCand& a, const ScoredCand& b){ return a.s > b.s; });
 
+    // Optional: simulate learning feedback using top-K pseudo rewards (higher score => reward 1.0 else 0.0)
+    if (rl) {
+      std::string feedback = "{\"rewards\":[";
+      for (size_t i=0;i<expansions.size();++i) {
+        feedback += (scored[i].s >= global_best.s ? "1" : "0");
+        if (i+1<expansions.size()) feedback += ",";
+      }
+      feedback += "]}";
+      char lerr[128] = {0};
+      rl_learn_batch(rl, feedback.c_str(), lerr, sizeof(lerr));
+    }
     beam.clear();
     for (int i = 0; i < K && i < (int)scored.size(); ++i) {
       beam.push_back(scored[i].c);
@@ -195,5 +262,6 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < std::min<size_t>(global_best.c.select.size(), 32); ++i) std::cout << int(global_best.c.select[i]);
   if (global_best.c.select.size() > 32) std::cout << "...";
   std::cout << "\n";
+  if (rl) rl_close(rl);
   return 0;
 }

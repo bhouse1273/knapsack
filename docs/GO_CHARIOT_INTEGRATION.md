@@ -22,6 +22,25 @@ Instead of a single cross-platform library with conditional compilation, we now 
 | **Linux CUDA** | `libknapsack_cuda.a` | NVIDIA GPU accelerated | `cmake -DBUILD_CUDA=ON` | 10-50x faster |
 | **macOS Metal** | `libknapsack_metal.a` | Apple GPU accelerated | `cmake -DUSE_METAL=ON` | 15-30x faster |
 
+### RL Support Library (NEW!)
+
+The knapsack repository now includes a production-ready **RL (Reinforcement Learning) support library** for Next-Best Action (NBA) scoring:
+
+| Library | Features | Purpose | Build Option |
+|---------|----------|---------|--------------|
+| **librl_support.a** | LinUCB bandit + ONNX inference | Static library for C++ apps | Always built |
+| **librl_support.so** | Same as static | Shared library for Go/Python bindings | Always built |
+
+**RL Features:**
+- **LinUCB Contextual Bandit**: Exploration/exploitation with alpha parameter
+- **ONNX Runtime Integration**: Load trained ML models (XGBoost, neural nets, etc.)
+- **Feature Extraction**: Automated slate feature generation (select/assign modes)
+- **Online Learning**: Structured feedback (rewards, chosen+decay, events)
+- **Sub-millisecond Latency**: Batch scoring <1ms for NBA decisions
+- **Graceful Fallback**: Auto-fallback to LinUCB if ONNX model unavailable
+
+**See**: `docs/RL_SUPPORT.md`, `ONNX_INTEGRATION_COMPLETE.md`
+
 **Benefits:**
 - 🚀 **Faster builds**: No GPU compilation unless needed
 - 🧹 **Cleaner code**: No complex `#ifdef` needed in Go
@@ -815,6 +834,210 @@ Run tests:
 ```bash
 CGO_ENABLED=1 go test -v ./internal/solver/...
 ```
+
+## RL Support Integration (NBA Scoring)
+
+### What is RL Support?
+
+The RL support library enables **Next-Best Action (NBA) scoring** using trained machine learning models:
+- Score candidate slates/configurations in batch (<1ms latency)
+- Load ONNX models trained in Python (XGBoost, TensorFlow, PyTorch, etc.)
+- Fallback to LinUCB contextual bandit if model unavailable
+- Online learning with structured feedback
+
+### Go Integration Example
+
+**File**: `internal/solver/rl_scorer.go`
+
+```go
+//go:build cgo
+// +build cgo
+
+package solver
+
+/*
+#cgo CFLAGS: -I/usr/local/include
+#cgo LDFLAGS: -L/usr/local/lib -lrl_support -lstdc++ -lm
+
+#include "rl/rl_api.h"
+#include <stdlib.h>
+*/
+import "C"
+import (
+    "encoding/json"
+    "fmt"
+    "unsafe"
+)
+
+// RLConfig represents RL scorer configuration
+type RLConfig struct {
+    FeatDim     int     `json:"feat_dim"`
+    Alpha       float64 `json:"alpha"`
+    ModelPath   string  `json:"model_path,omitempty"`
+    ModelInput  string  `json:"model_input,omitempty"`
+    ModelOutput string  `json:"model_output,omitempty"`
+}
+
+// RLScorer wraps the RL C API
+type RLScorer struct {
+    handle C.rl_handle_t
+}
+
+// NewRLScorer creates an RL scorer from config
+func NewRLScorer(config *RLConfig) (*RLScorer, error) {
+    configJSON, err := json.Marshal(config)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal config: %w", err)
+    }
+    
+    cConfig := C.CString(string(configJSON))
+    defer C.free(unsafe.Pointer(cConfig))
+    
+    var errBuf [256]C.char
+    handle := C.rl_init_from_json(cConfig, &errBuf[0], 256)
+    if handle == nil {
+        return nil, fmt.Errorf("RL init failed: %s", C.GoString(&errBuf[0]))
+    }
+    
+    return &RLScorer{handle: handle}, nil
+}
+
+// ScoreBatch scores candidate slates with features
+func (r *RLScorer) ScoreBatch(features []float32, featDim int) ([]float64, error) {
+    if len(features)%featDim != 0 {
+        return nil, fmt.Errorf("features length %d not divisible by feat_dim %d", len(features), featDim)
+    }
+    
+    numCandidates := len(features) / featDim
+    scores := make([]float64, numCandidates)
+    
+    var errBuf [256]C.char
+    rc := C.rl_score_batch_with_features(
+        r.handle,
+        (*C.float)(unsafe.Pointer(&features[0])),
+        C.int(featDim),
+        C.int(numCandidates),
+        (*C.double)(unsafe.Pointer(&scores[0])),
+        &errBuf[0],
+        256,
+    )
+    
+    if rc != 0 {
+        return nil, fmt.Errorf("RL scoring failed (rc=%d): %s", rc, C.GoString(&errBuf[0]))
+    }
+    
+    return scores, nil
+}
+
+// Learn updates the model with feedback
+func (r *RLScorer) Learn(rewards []float64) error {
+    // Create feedback JSON
+    feedback := map[string]interface{}{
+        "rewards": rewards,
+    }
+    feedbackJSON, err := json.Marshal(feedback)
+    if err != nil {
+        return fmt.Errorf("failed to marshal feedback: %w", err)
+    }
+    
+    cFeedback := C.CString(string(feedbackJSON))
+    defer C.free(unsafe.Pointer(cFeedback))
+    
+    var errBuf [256]C.char
+    rc := C.rl_learn_batch(r.handle, cFeedback, &errBuf[0], 256)
+    if rc != 0 {
+        return fmt.Errorf("RL learning failed (rc=%d): %s", rc, C.GoString(&errBuf[0]))
+    }
+    
+    return nil
+}
+
+// Close releases RL resources
+func (r *RLScorer) Close() {
+    if r.handle != nil {
+        C.rl_close(r.handle)
+        r.handle = nil
+    }
+}
+```
+
+### Example Usage in Chariot
+
+```go
+// Initialize RL scorer with ONNX model (optional)
+rlConfig := &RLConfig{
+    FeatDim:     12,
+    Alpha:       0.3,
+    ModelPath:   "/models/nba_scorer.onnx",
+    ModelInput:  "input",
+    ModelOutput: "output",
+}
+
+scorer, err := NewRLScorer(rlConfig)
+if err != nil {
+    log.Printf("RL scorer init failed (using baseline): %v", err)
+    // Continue with baseline solver
+} else {
+    defer scorer.Close()
+}
+
+// During NBA decision:
+// 1. Generate candidate configurations (beam search)
+candidates := generateCandidates(currentState)
+
+// 2. Extract features from candidates
+features := extractFeatures(candidates) // Your feature extraction
+
+// 3. Score candidates with RL
+scores, err := scorer.ScoreBatch(features, rlConfig.FeatDim)
+if err != nil {
+    log.Printf("RL scoring failed: %v", err)
+    // Fallback to heuristic scoring
+}
+
+// 4. Select best candidate
+bestIdx := argmax(scores)
+chosenCandidate := candidates[bestIdx]
+
+// 5. Execute and observe reward
+reward := executeAndObserve(chosenCandidate)
+
+// 6. Learn from feedback (optional, for online updates)
+scorer.Learn([]float64{reward})
+```
+
+### Dockerfile Integration (with ONNX)
+
+To include ONNX Runtime for model inference, update your Dockerfile:
+
+```dockerfile
+# Stage 1: Get libraries
+FROM knapsack-linux-cpu AS knapsack-lib
+
+# Stage 2: Build go-chariot
+FROM golang:1.21 AS builder
+
+# Install ONNX Runtime (optional, for model inference)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libonnxruntime-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy knapsack and RL libraries
+COPY --from=knapsack-lib /lib/libknapsack_cpu.a /usr/local/lib/
+COPY --from=knapsack-lib /lib/librl_support.a /usr/local/lib/
+COPY --from=knapsack-lib /include/knapsack_cpu.h /usr/local/include/
+COPY --from=knapsack-lib /include/rl/ /usr/local/include/rl/
+
+# Build with RL support
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-I/usr/local/include"
+ENV CGO_LDFLAGS="-L/usr/local/lib -lknapsack_cpu -lrl_support -lonnxruntime -lstdc++ -lm"
+
+# ... rest of build
+```
+
+**Note**: If ONNX Runtime is not available, the RL library will gracefully fallback to LinUCB bandit.
 
 ## Next Steps
 

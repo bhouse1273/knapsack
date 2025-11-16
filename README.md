@@ -1,11 +1,17 @@
 # Knapsack
 
-A generalized, block‑aware knapsack solver with GPU acceleration and a modern V2 pipeline.
+A generalized, block‑aware knapsack solver with GPU acceleration, reinforcement learning support, and a modern V2 pipeline.
 
 Backends:
 - NVIDIA CUDA (Jetson and other CUDA‑capable systems)
 - Apple Metal (Apple Silicon, in‑process via Objective‑C++/cgo)
 - CPU fallback on all platforms
+
+RL Support:
+- LinUCB contextual bandit for NBA (Next-Best Action) scoring
+- ONNX Runtime integration for trained ML models
+- Online learning with structured feedback
+- Sub-millisecond batch inference
 
 On macOS Apple Silicon, CUDA is not required; the library uses a Metal‑based evaluator by default and automatically falls back to CPU if Metal is unavailable.
 
@@ -23,6 +29,14 @@ The legacy CSV demo is still available and produces a tabular solution CSV; colu
 - Dual GPU backends: CUDA (NVIDIA) and Metal (Apple Silicon) with automatic CPU fallback
 - Runtime shader compilation on macOS (no external `metal` CLI dependency)
 - Classical (CSV) solver retained for historical scenarios
+- **RL Support Library**: Production-ready reinforcement learning for NBA scoring
+  - LinUCB contextual bandit with exploration/exploitation
+  - ONNX Runtime integration for trained ML models (XGBoost, TensorFlow, PyTorch, etc.)
+  - Feature extraction for select and assign modes
+  - Online learning with structured feedback (rewards, chosen+decay, events)
+  - Batch inference <1ms for thousands of candidates
+  - Graceful fallback to bandit if ONNX model unavailable
+  - Go (cgo) and Python (ctypes) bindings
 
 ## Requirements
 
@@ -37,6 +51,10 @@ CUDA (Jetson/other NVIDIA machines):
 Apple Metal (Apple Silicon):
 - macOS with Apple Clang toolchain (Xcode Command Line Tools)
 - Apple Silicon GPU (Metal framework available by default)
+
+Optional (for RL ONNX support):
+- ONNX Runtime 1.22+ (`brew install onnxruntime` on macOS, or `apt-get install libonnxruntime-dev` on Linux)
+- Python packages for model generation: `pip install onnx numpy`
 
 ## Build and Run
 
@@ -163,6 +181,153 @@ make v2_scout_demo
 See [`docs/BeamAsDataScout.md`](docs/BeamAsDataScout.md) for detailed documentation and integration patterns.
 
 Solution fields (C API): `num_items`, `select[]`, `objective`, `penalty`, `total`.
+
+## RL Support (NBA Scoring)
+
+The RL support library enables **Next-Best Action (NBA) scoring** using reinforcement learning and trained ML models.
+
+### Features
+
+- **LinUCB Contextual Bandit**: Exploration/exploitation with configurable alpha parameter
+- **ONNX Runtime Integration**: Load trained models (XGBoost, neural nets, etc.) for production inference
+- **Feature Extraction**: Automated slate feature generation for select and assign modes
+- **Online Learning**: Update models with structured feedback (rewards, chosen+decay, events)
+- **Batch Inference**: Score thousands of candidates in <1ms
+- **Graceful Fallback**: Auto-fallback to LinUCB bandit if ONNX model unavailable
+- **Language Bindings**: Go (cgo) and Python (ctypes) ready
+
+### Quick Start
+
+**Build with ONNX Support:**
+```bash
+# macOS
+brew install onnxruntime
+cmake -B build -DBUILD_ONNX=ON
+cmake --build build
+
+# Linux
+apt-get install libonnxruntime-dev
+cmake -B build -DBUILD_ONNX=ON
+cmake --build build
+```
+
+**C++ API:**
+```cpp
+#include "rl/rl_api.h"
+
+// Initialize with ONNX model (optional)
+const char* cfg = R"({
+    "feat_dim": 12,
+    "alpha": 0.3,
+    "model_path": "models/nba_scorer.onnx",
+    "model_input": "input",
+    "model_output": "output"
+})";
+
+rl_handle_t rl = rl_init_from_json(cfg, err, sizeof(err));
+
+// Prepare features from candidates
+float features[num_candidates * feat_dim];
+rl_prepare_features(rl, candidates, num_items, num_candidates, 
+                     0 /*select mode*/, features, err, sizeof(err));
+
+// Score batch with ONNX model (or LinUCB fallback)
+double scores[num_candidates];
+rl_score_batch_with_features(rl, features, feat_dim, num_candidates, 
+                              scores, err, sizeof(err));
+
+// Learn from feedback
+const char* feedback = R"({"rewards": [1.0, 0.0, 0.5]})";
+rl_learn_batch(rl, feedback, err, sizeof(err));
+
+rl_close(rl);
+```
+
+**Python API:**
+```python
+from rl_support import RL
+
+# Initialize RL scorer
+scorer = RL({
+    "feat_dim": 12,
+    "alpha": 0.3,
+    "model_path": "models/nba_scorer.onnx"
+})
+
+# Score candidates
+scores = scorer.score_with_features(features, feat_dim, num_candidates)
+
+# Learn from feedback
+scorer.learn({"rewards": [1.0, 0.0, 0.5]})
+scorer.close()
+```
+
+**Generate Test ONNX Model:**
+```bash
+pip install onnx numpy
+python3 tools/gen_onnx_model.py 12 models/my_model.onnx
+```
+
+### Documentation
+
+- **RL Support Guide**: [`docs/RL_SUPPORT.md`](docs/RL_SUPPORT.md) - Complete API reference
+- **ONNX Integration**: [`ONNX_INTEGRATION_COMPLETE.md`](ONNX_INTEGRATION_COMPLETE.md) - Implementation details
+- **Model Generation**: [`docs/ONNX_MODEL_GEN.md`](docs/ONNX_MODEL_GEN.md) - Creating test models
+- **NBA Example**: [`docs/BeamNextBestAction.md`](docs/BeamNextBestAction.md) - Usage patterns
+
+### Go Integration
+
+```go
+import "github.com/bhouse1273/knapsack/bindings/go/rl"
+
+// Initialize RL scorer
+config := `{"feat_dim": 12, "alpha": 0.3, "model_path": "models/nba_scorer.onnx"}`
+scorer, err := rl.InitFromJSON(config)
+if err != nil {
+    log.Fatal(err)
+}
+defer scorer.Close()
+
+// Score candidates
+scores, err := scorer.ScoreWithFeatures(features, featDim, numCandidates)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Learn from feedback
+feedback := `{"rewards": [1.0, 0.0, 0.5]}`
+err = scorer.Learn(feedback)
+```
+
+See [`bindings/go/rl/rl.go`](bindings/go/rl/rl.go) for complete Go API.
+
+### Running the NBA Example
+
+```bash
+# Build the example
+cd build
+cmake --build . --target nba_beam_example
+
+# Run with default config
+./nba_beam_example docs/v2/example_select.json 12 3 5
+
+# Run with RL config
+RL_CONFIG_PATH=docs/RL_CONFIG_EXAMPLE.json \
+  ./nba_beam_example docs/v2/example_select.json 12 3 5
+```
+
+### Tests
+
+```bash
+# Run RL tests (9 tests without ONNX, 13 with ONNX)
+cd build
+./tests/v2/test_rl_api
+
+# With ONNX support enabled
+cmake -B build -DBUILD_ONNX=ON
+cmake --build build --target test_rl_api
+./build/tests/v2/test_rl_api  # 13 tests, 48 assertions
+```
 
 ## Python Bindings
 
@@ -362,7 +527,19 @@ Sample CSVs live under `data/` (e.g., `entities.csv`, `entities_300.csv` for leg
 - `kernels/metal/` Metal API (Objective‑C++ bridge and shader)
 - `kernels/` (CUDA kernels for non-Apple builds)
 - `knapsack-library/` C API wrapper (used by other integrations)
+- `rl/` RL support library (LinUCB + ONNX integration)
+  - `rl_api.h` - C API header for RL functions
+  - `rl_api.cpp` - Implementation with feature extraction, scoring, learning
 - `bindings/go/metal/` Go cgo package for Metal evaluator
+- `bindings/go/rl/` Go cgo package for RL support
+- `bindings/python/` Python ctypes wrapper for RL support
+- `tools/` Utilities including ONNX model generation
+- `tests/v2/` Unit tests including RL and ONNX inference tests
+- `docs/` Comprehensive documentation
+  - `RL_SUPPORT.md` - RL API reference and guide
+  - `BeamNextBestAction.md` - NBA usage patterns
+  - `ONNX_INTEGRATION_STATUS.md` - ONNX setup and status
+  - `ONNX_MODEL_GEN.md` - Model generation guide
 
 ## FAQ
 
@@ -374,3 +551,15 @@ Sample CSVs live under `data/` (e.g., `entities.csv`, `entities_300.csv` for leg
 
 - Q: Where is the output written?
   - A: By default, `routes.csv` in the current working directory. You can specify a custom filename as the second command-line argument: `./knapsack_solver 50 my_output.csv`
+
+- Q: Do I need ONNX Runtime for the RL support library?
+  - A: No, it's optional. The RL library works with LinUCB bandit by default. Build with `-DBUILD_ONNX=ON` and install ONNX Runtime (`brew install onnxruntime` or `apt-get install libonnxruntime-dev`) to enable trained model inference.
+
+- Q: How do I use my own trained models with RL support?
+  - A: Train your model in Python (XGBoost, TensorFlow, PyTorch, scikit-learn), export to ONNX format, then load via the `model_path` config field. The model must have input shape `[batch, feat_dim]` and output shape `[batch]` (float32). See `docs/ONNX_MODEL_GEN.md` for examples.
+
+- Q: What's the performance difference between LinUCB and ONNX models?
+  - A: Both provide sub-millisecond batch scoring. LinUCB is simpler (linear weights) while ONNX models can capture non-linear patterns for better accuracy. The library gracefully falls back to LinUCB if the ONNX model fails to load.
+
+- Q: Can I use RL support without the knapsack solver?
+  - A: Yes! The RL library (`librl_support.a`) is independent and can be used standalone for any NBA scoring task. See `docs/RL_SUPPORT.md` for the C API and language bindings.

@@ -1,0 +1,9 @@
+Beam search already suits incremental re-optimization, but you’ll get the most benefit by treating each update as a “warm-start” rather than a cold re-solve:
+
+- **Persist solver state**: Keep the previous `select[]` bitset plus any auxiliary stats (objective contributions, constraint slack). When new items arrive or attributes change, rebuild only the affected columns in the SoA, mark dirty indices, and feed that to the solver.
+- **Warm-beam restart**: Seed the beam with the prior best solution and a handful of neighbors produced by flipping the dirty indices. This avoids exploring already-vetted regions of the search space while still allowing the beam to drift if the update is disruptive.
+- **Delta evaluation**: Instead of recomputing full objective/constraint sums, maintain running totals and adjust them by the delta of each changed item. Our V2 solver already exposes itemwise attributes, so you can add a thin layer that caches per-item contributions and updates the totals in O(#changes).
+- **Batching strategy**: If updates trickle in, queue them for short intervals (e.g., every few seconds) so each re-optimization amortizes the beam cost. For “urgent” updates, cap the beam width/iterations to keep latency predictable, then schedule a deeper pass asynchronously.
+- **Outputs**: Emit the new optimal set plus metadata—objective delta, items added/removed, and constraint slack deltas—so downstream systems can react without diffing entire bitsets.
+
+If you’re ready to prototype, we can add a small service wrapper that keeps the HostSoA in memory, exposes an “update items” endpoint, and calls into the existing beam search with a warm-start seed. Let me know if you want that scaffolding or example code.

@@ -78,6 +78,3 @@
 - Tuning
   - Try a slightly larger example to observe non-zero drops and quantify beam speed-ups.
 
-If you want, I can add a small test harness under tools to print before/after N and confirm the seed objective is ≥ baseline on a synthetic case with duplicates to demonstrate the drop effect.
-
-Made changes.

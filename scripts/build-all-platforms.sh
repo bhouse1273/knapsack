@@ -34,10 +34,13 @@ docker build --platform linux/amd64 -f docker/Dockerfile.linux-cpu --target buil
 echo "Extracting Linux CPU library..."
 CONTAINER_ID=$(docker create knapsack-linux-cpu-builder)
 docker cp "$CONTAINER_ID:/usr/local/lib/libknapsack_cpu.a" "$LIB_DIR/linux-cpu/"
+docker cp "$CONTAINER_ID:/usr/local/lib/librl_support.a" "$LIB_DIR/linux-cpu/"
 docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cpu.h" "$LIB_DIR/linux-cpu/knapsack_cpu.h"
+docker cp "$CONTAINER_ID:/usr/local/include/rl_api.h" "$LIB_DIR/linux-cpu/rl_api.h"
 docker rm "$CONTAINER_ID"
 
 echo "✅ Linux CPU library: $(ls -lh $LIB_DIR/linux-cpu/libknapsack_cpu.a | awk '{print $5}')"
+echo "✅ Linux CPU RL library: $(ls -lh $LIB_DIR/linux-cpu/librl_support.a | awk '{print $5}')"
 
 echo ""
 echo "====================================="
@@ -48,10 +51,13 @@ docker build --platform linux/amd64 -f docker/Dockerfile.linux-cuda --target bui
 echo "Extracting Linux CUDA library..."
 CONTAINER_ID=$(docker create knapsack-linux-cuda-builder)
 docker cp "$CONTAINER_ID:/usr/local/lib/libknapsack_cuda.a" "$LIB_DIR/linux-cuda/"
+docker cp "$CONTAINER_ID:/usr/local/lib/librl_support.a" "$LIB_DIR/linux-cuda/"
 docker cp "$CONTAINER_ID:/usr/local/include/knapsack_cuda.h" "$LIB_DIR/linux-cuda/knapsack_cuda.h"
+docker cp "$CONTAINER_ID:/usr/local/include/rl_api.h" "$LIB_DIR/linux-cuda/rl_api.h"
 docker rm "$CONTAINER_ID"
 
 echo "✅ Linux CUDA library: $(ls -lh $LIB_DIR/linux-cuda/libknapsack_cuda.a | awk '{print $5}')"
+echo "✅ Linux CUDA RL library: $(ls -lh $LIB_DIR/linux-cuda/librl_support.a | awk '{print $5}')"
 
 echo ""
 echo "====================================="
@@ -63,14 +69,20 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     rm -rf build-metal
     mkdir -p build-metal
     cd build-metal
-    cmake .. -DUSE_METAL=ON -DCMAKE_BUILD_TYPE=Release
+    cmake .. -DUSE_METAL=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_ONNX=OFF
     cmake --build . --target knapsack -j$(sysctl -n hw.ncpu)
+    cmake --build . --target rl_support -j$(sysctl -n hw.ncpu)
+    cmake --build . --target rl_support_shared -j$(sysctl -n hw.ncpu)
     
     echo "Copying macOS Metal library..."
     cp libknapsack_metal.a "$LIB_DIR/macos-metal/"
+    cp librl_support.a "$LIB_DIR/macos-metal/"
+    cp librl_support.dylib "$LIB_DIR/macos-metal/"
     cp ../include/knapsack_c.h "$LIB_DIR/macos-metal/knapsack_macos_metal.h"
+    cp ../../rl/rl_api.h "$LIB_DIR/macos-metal/rl_api.h"
     
     echo "✅ macOS Metal library: $(ls -lh $LIB_DIR/macos-metal/libknapsack_metal.a | awk '{print $5}')"
+    echo "✅ macOS Metal RL library: $(ls -lh $LIB_DIR/macos-metal/librl_support.a | awk '{print $5}')"
 else
     echo "⚠️  Skipping macOS Metal build (not on macOS)"
     echo "   To build Metal library, run this script on a Mac"
@@ -86,15 +98,21 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     rm -rf build-macos-cpu
     mkdir -p build-macos-cpu
     cd build-macos-cpu
-    cmake .. -DBUILD_CPU_ONLY=ON -DUSE_METAL=OFF -DCMAKE_BUILD_TYPE=Release
+    cmake .. -DBUILD_CPU_ONLY=ON -DUSE_METAL=OFF -DCMAKE_BUILD_TYPE=Release -DBUILD_ONNX=OFF
     cmake --build . --target knapsack -j$(sysctl -n hw.ncpu)
+    cmake --build . --target rl_support -j$(sysctl -n hw.ncpu)
+    cmake --build . --target rl_support_shared -j$(sysctl -n hw.ncpu)
 
     echo "Copying macOS CPU library..."
     # CMake outputs libknapsack_macos_cpu.a on macOS CPU-only builds
     cp libknapsack_macos_cpu.a "$LIB_DIR/macos-cpu/"
+    cp librl_support.a "$LIB_DIR/macos-cpu/"
+    cp librl_support.dylib "$LIB_DIR/macos-cpu/"
     cp ../include/knapsack_c.h "$LIB_DIR/macos-cpu/knapsack_macos_cpu.h"
+    cp ../../rl/rl_api.h "$LIB_DIR/macos-cpu/rl_api.h"
 
     echo "✅ macOS CPU library: $(ls -lh $LIB_DIR/macos-cpu/libknapsack_macos_cpu.a | awk '{print $5}')"
+    echo "✅ macOS CPU RL library: $(ls -lh $LIB_DIR/macos-cpu/librl_support.a | awk '{print $5}')"
 else
     echo "⚠️  Skipping macOS CPU build (not on macOS)"
 fi

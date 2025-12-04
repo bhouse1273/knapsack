@@ -25,26 +25,37 @@ RUN mkdir -p /build/knapsack/third_party/picojson && \
 RUN test -f /build/knapsack/third_party/picojson/picojson.h || \
     (echo "ERROR: picojson.h not found!" && exit 1)
 
-# Build CPU-only library (no Metal support)
+# Build CPU-only library (no Metal support) with RL Support
 RUN cd /build/knapsack/knapsack-library && \
     rm -rf build && mkdir -p build && cd build && \
-    echo "=== Building CPU-only knapsack library ===" && \
+    echo "=== Building CPU-only knapsack library with RL Support ===" && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DBUILD_CPU_ONLY=ON && \
+        -DBUILD_CPU_ONLY=ON \
+        -DBUILD_ONNX=OFF && \
     cmake --build . --target knapsack -j$(nproc) && \
-    echo "=== Installing library and header ===" && \
+    cmake --build . --target rl_support -j$(nproc) && \
+    cmake --build . --target rl_support_shared -j$(nproc) && \
+    echo "=== Installing libraries and headers ===" && \
     cp libknapsack_cpu.a /usr/local/lib/libknapsack_cpu.a && \
+    cp librl_support.a /usr/local/lib/librl_support.a && \
+    cp librl_support.so /usr/local/lib/librl_support.so && \
     cp ../include/knapsack_c.h /usr/local/include/knapsack_cpu.h && \
-    ls -lh /usr/local/lib/libknapsack_cpu.a /usr/local/include/knapsack_cpu.h
+    cp ../../rl/rl_api.h /usr/local/include/rl_api.h && \
+    ls -lh /usr/local/lib/libknapsack_cpu.a /usr/local/lib/librl_support.a /usr/local/include/knapsack_cpu.h /usr/local/include/rl_api.h
 
 # Verify installation
 RUN echo "=== CPU-only library built successfully ===" && \
     file /usr/local/lib/libknapsack_cpu.a && \
-    nm /usr/local/lib/libknapsack_cpu.a | grep -i metal || echo "✓ No Metal symbols found (as expected)"
+    file /usr/local/lib/librl_support.a && \
+    nm /usr/local/lib/libknapsack_cpu.a | grep -i metal || echo "✓ No Metal symbols in knapsack library (as expected)" && \
+    nm /usr/local/lib/librl_support.a | grep " T rl_" | head -5 || echo "✓ RL symbols found"
 
 # Create minimal artifact image
 FROM scratch AS artifacts
 COPY --from=builder /usr/local/lib/libknapsack_cpu.a /lib/libknapsack_cpu.a
+COPY --from=builder /usr/local/lib/librl_support.a /lib/librl_support.a
+COPY --from=builder /usr/local/lib/librl_support.so /lib/librl_support.so
 COPY --from=builder /usr/local/include/knapsack_cpu.h /include/knapsack_cpu.h
+COPY --from=builder /usr/local/include/rl_api.h /include/rl_api.h

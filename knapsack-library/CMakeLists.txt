@@ -130,7 +130,81 @@ install(TARGETS knapsack
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/knapsack_c.h DESTINATION include)
 
+# ========================================================================
+# RL Support Library - Always build alongside knapsack solver
+# ========================================================================
+option(BUILD_ONNX "Build with ONNX Runtime support for RL" OFF)
+
+# RL library sources
+set(RL_DIR "${PROJ_ROOT}/rl")
+set(RL_SOURCES "${RL_DIR}/rl_api.cpp")
+
+# Create RL support library (static)
+add_library(rl_support STATIC ${RL_SOURCES})
+target_include_directories(rl_support
+  PUBLIC
+    ${RL_DIR}
+  PRIVATE
+    ${PROJ_ROOT}/include
+    ${PROJ_ROOT}
+)
+target_compile_features(rl_support PUBLIC cxx_std_17)
+
+# ONNX Runtime integration (optional)
+if(BUILD_ONNX)
+  find_package(onnxruntime QUIET)
+  if(onnxruntime_FOUND)
+    # Use parent directory of onnxruntime include (e.g., /opt/homebrew/include not /opt/homebrew/include/onnxruntime)
+    get_target_property(ONNX_INCLUDE_DIRS onnxruntime::onnxruntime INTERFACE_INCLUDE_DIRECTORIES)
+    if(ONNX_INCLUDE_DIRS)
+      get_filename_component(ONNXRUNTIME_INCLUDE_DIRS "${ONNX_INCLUDE_DIRS}" DIRECTORY)
+    endif()
+    
+    target_compile_definitions(rl_support PUBLIC RL_ONNX_ENABLED)
+    target_include_directories(rl_support PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
+    target_link_libraries(rl_support PRIVATE onnxruntime::onnxruntime)
+    message(STATUS "RL Support: ONNX Runtime enabled")
+  else()
+    message(WARNING "BUILD_ONNX=ON but onnxruntime not found. RL will use LinUCB bandit only.")
+  endif()
+else()
+  message(STATUS "RL Support: LinUCB bandit only (BUILD_ONNX=OFF)")
+endif()
+
+# Create shared library variant for language bindings
+add_library(rl_support_shared SHARED ${RL_SOURCES})
+target_include_directories(rl_support_shared
+  PUBLIC
+    ${RL_DIR}
+  PRIVATE
+    ${PROJ_ROOT}/include
+    ${PROJ_ROOT}
+)
+target_compile_features(rl_support_shared PUBLIC cxx_std_17)
+set_target_properties(rl_support_shared PROPERTIES OUTPUT_NAME "rl_support")
+
+if(BUILD_ONNX AND onnxruntime_FOUND)
+  target_compile_definitions(rl_support_shared PUBLIC RL_ONNX_ENABLED)
+  target_include_directories(rl_support_shared PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
+  target_link_libraries(rl_support_shared PRIVATE onnxruntime::onnxruntime)
+endif()
+
+# Install RL libraries and header
+install(TARGETS rl_support rl_support_shared
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+
+install(FILES ${RL_DIR}/rl_api.h DESTINATION include)
+
+message(STATUS "RL Support library configured:")
+message(STATUS "  - librl_support.a (static)")
+message(STATUS "  - librl_support.so/dylib (shared)")
+message(STATUS "  - Header: rl_api.h")
+
+# ========================================================================
 # Simple CLI to run V2 from a JSON config
+# ========================================================================
 add_executable(knapsack_v2_cli ${CMAKE_CURRENT_LIST_DIR}/src/cli_v2.cpp)
 target_include_directories(knapsack_v2_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(knapsack_v2_cli PRIVATE knapsack)

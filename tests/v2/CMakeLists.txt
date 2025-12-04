@@ -40,6 +40,23 @@ if(BUILD_ONNX)
   target_compile_definitions(test_rl_api PRIVATE RL_ONNX_ENABLED)
 endif()
 
+# Copy ONNX model files to build directory for RL tests
+if(BUILD_ONNX)
+    set(ONNX_MODEL_FILES
+        tiny_linear_8.onnx
+        tiny_linear_12.onnx
+        dummy_model.onnx
+    )
+    foreach(model_file ${ONNX_MODEL_FILES})
+        configure_file(
+            ${CMAKE_CURRENT_SOURCE_DIR}/${model_file}
+            ${CMAKE_CURRENT_BINARY_DIR}/${model_file}
+            COPYONLY
+        )
+    endforeach()
+    message(STATUS "  - Copied ONNX model files to build directory")
+endif()
+
 # Test executable for Metal Evaluation (Apple + Metal only)
 if(APPLE AND USE_METAL)
     set(TEST_METAL_SOURCES test_eval_metal.cpp)
@@ -93,6 +110,7 @@ set_tests_properties(eval_cpu PROPERTIES
 set_tests_properties(rl_api PROPERTIES
     LABELS "v2;rl"
     TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 
 # Custom target to build all tests

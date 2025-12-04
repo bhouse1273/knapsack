@@ -25,28 +25,39 @@ RUN mkdir -p /build/knapsack/third_party/picojson && \
 RUN test -f /build/knapsack/third_party/picojson/picojson.h || \
     (echo "ERROR: picojson.h not found!" && exit 1)
 
-# Build CUDA-accelerated library
+# Build CUDA-accelerated library with RL Support
 RUN cd /build/knapsack/knapsack-library && \
     rm -rf build && mkdir -p build && cd build && \
-    echo "=== Building CUDA-accelerated knapsack library ===" && \
+    echo "=== Building CUDA-accelerated knapsack library with RL Support ===" && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_CUDA=ON \
         -DUSE_METAL=OFF \
+        -DBUILD_ONNX=OFF \
         -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89;90" && \
     cmake --build . --target knapsack -j$(nproc) && \
-    echo "=== Installing library and header ===" && \
+    cmake --build . --target rl_support -j$(nproc) && \
+    cmake --build . --target rl_support_shared -j$(nproc) && \
+    echo "=== Installing libraries and headers ===" && \
     cp libknapsack_cuda.a /usr/local/lib/libknapsack_cuda.a && \
+    cp librl_support.a /usr/local/lib/librl_support.a && \
+    cp librl_support.so /usr/local/lib/librl_support.so && \
     cp ../include/knapsack_c.h /usr/local/include/knapsack_cuda.h && \
-    ls -lh /usr/local/lib/libknapsack_cuda.a /usr/local/include/knapsack_cuda.h
+    cp ../../rl/rl_api.h /usr/local/include/rl_api.h && \
+    ls -lh /usr/local/lib/libknapsack_cuda.a /usr/local/lib/librl_support.a /usr/local/include/knapsack_cuda.h /usr/local/include/rl_api.h
 
 # Verify CUDA library
 RUN echo "=== CUDA library built successfully ===" && \
     nm /usr/local/lib/libknapsack_cuda.a | grep -i cuda && \
-    echo "✓ CUDA symbols found (as expected)"
+    echo "✓ CUDA symbols found (as expected)" && \
+    nm /usr/local/lib/librl_support.a | grep " T rl_" | head -5 && \
+    echo "✓ RL symbols found"
 
 # Create minimal artifact image
 FROM scratch AS artifacts
 COPY --from=builder /usr/local/lib/libknapsack_cuda.a /lib/libknapsack_cuda.a
+COPY --from=builder /usr/local/lib/librl_support.a /lib/librl_support.a
+COPY --from=builder /usr/local/lib/librl_support.so /lib/librl_support.so
 COPY --from=builder /usr/local/include/knapsack_cuda.h /include/knapsack_cuda.h
+COPY --from=builder /usr/local/include/rl_api.h /include/rl_api.h

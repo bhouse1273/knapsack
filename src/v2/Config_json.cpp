@@ -3,6 +3,7 @@
 
 #include "v2/Config.h"
 
+#include <cstddef>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -27,16 +28,78 @@ static bool get_object(const picojson::object& o, const char* key, picojson::obj
   auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<picojson::object>()) return false; *out = it->second.get<picojson::object>(); return true;
 }
 
+static bool parse_external_attr(const std::string& name, const picojson::object& obj, ItemsSpec* items, std::string* err) {
+  AttributeSourceSpec spec;
+  std::string source;
+  if (!get_string(obj, "source", &source)) {
+    if (err) *err = "attribute '" + name + "' missing source";
+    return false;
+  }
+  if (source == "file") {
+    spec.kind = AttributeSourceKind::kFile;
+  } else if (source == "stream") {
+    spec.kind = AttributeSourceKind::kStream;
+  } else {
+    if (err) *err = "attribute '" + name + "' has unsupported source '" + source + "'";
+    return false;
+  }
+  std::string format;
+  if (get_string(obj, "format", &format)) spec.format = format;
+  std::string path;
+  if (get_string(obj, "path", &path)) spec.path = path;
+  std::string channel;
+  if (get_string(obj, "channel", &channel)) spec.channel = channel;
+  auto it = obj.find("offset_bytes");
+  if (it != obj.end() && it->second.is<double>()) {
+    double raw = it->second.get<double>();
+    if (raw < 0) {
+      if (err) *err = "attribute '" + name + "' offset_bytes must be >= 0";
+      return false;
+    }
+    spec.offset_bytes = static_cast<std::size_t>(raw);
+  }
+  auto chunks_it = obj.find("chunks");
+  if (chunks_it != obj.end()) {
+    if (!chunks_it->second.is<picojson::array>()) {
+      if (err) *err = "attribute '" + name + "' chunks must be an array";
+      return false;
+    }
+    for (const auto& entry : chunks_it->second.get<picojson::array>()) {
+      if (!entry.is<std::string>()) {
+        if (err) *err = "attribute '" + name + "' chunks must be strings";
+        return false;
+      }
+      spec.chunks.push_back(entry.get<std::string>());
+    }
+  }
+  if (items->sources.count(name) || items->attributes.count(name)) {
+    if (err) *err = "duplicate attribute '" + name + "'";
+    return false;
+  }
+  items->sources[name] = std::move(spec);
+  return true;
+}
+
 static bool parse_items(const picojson::object& root, ItemsSpec* items, std::string* err) {
   picojson::object itemsObj; if (!get_object(root, "items", &itemsObj)) { if (err) *err = "missing 'items'"; return false; }
   if (!get_int(itemsObj, "count", &items->count)) { if (err) *err = "items.count missing or invalid"; return false; }
   picojson::object attrs; if (!get_object(itemsObj, "attributes", &attrs)) { if (err) *err = "items.attributes missing"; return false; }
   for (const auto& kv : attrs) {
-    if (!kv.second.is<picojson::array>()) { if (err) *err = "attribute '" + kv.first + "' not an array"; return false; }
-    const auto& arr = kv.second.get<picojson::array>();
-    std::vector<double> vec; vec.reserve(arr.size());
-    for (const auto& e : arr) { if (!e.is<double>()) { if (err) *err = "attribute '" + kv.first + "' contains non-numeric"; return false; } vec.push_back(e.get<double>()); }
-    items->attributes[kv.first] = std::move(vec);
+    if (kv.second.is<picojson::array>()) {
+      const auto& arr = kv.second.get<picojson::array>();
+      std::vector<double> vec; vec.reserve(arr.size());
+      for (const auto& e : arr) {
+        if (!e.is<double>()) { if (err) *err = "attribute '" + kv.first + "' contains non-numeric"; return false; }
+        vec.push_back(e.get<double>());
+      }
+      if (items->sources.count(kv.first)) { if (err) *err = "duplicate attribute '" + kv.first + "'"; return false; }
+      items->attributes[kv.first] = std::move(vec);
+    } else if (kv.second.is<picojson::object>()) {
+      if (!parse_external_attr(kv.first, kv.second.get<picojson::object>(), items, err)) return false;
+    } else {
+      if (err) *err = "attribute '" + kv.first + "' must be array or object";
+      return false;
+    }
   }
   return true;
 }

@@ -28,6 +28,51 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       return false;
     }
   }
+
+  for (const auto& kv : cfg.items.sources) {
+    const auto& name = kv.first;
+    const auto& spec = kv.second;
+    if (cfg.items.attributes.count(name)) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "attribute '" << name << "' provided both inline and as external source";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.kind == AttributeSourceKind::kInline) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "attribute '" << name << "' external spec must declare 'file' or 'stream' source";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.is_file() && spec.path.empty() && spec.chunks.empty()) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "file-backed attribute '" << name << "' missing path or chunks";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.is_stream() && spec.channel.empty() && spec.chunks.empty()) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "stream-backed attribute '" << name << "' missing channel or chunks";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.format != "binary64_le") {
+      if (err) {
+        std::ostringstream oss;
+        oss << "attribute '" << name << "' declares unsupported format '" << spec.format << "'";
+        *err = oss.str();
+      }
+      return false;
+    }
+  }
   
   // For assign mode, validate knapsack specs
   if (cfg.mode == "assign") {
@@ -65,7 +110,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       return false;
     }
     
-    if (cfg.items.attributes.find(cfg.knapsack.capacity_attr) == cfg.items.attributes.end()) {
+    if (!cfg.items.HasAttribute(cfg.knapsack.capacity_attr)) {
       if (err) {
         std::ostringstream oss;
         oss << "knapsack.capacity_attr '" << cfg.knapsack.capacity_attr 
@@ -81,7 +126,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     const auto& constraint = cfg.constraints[i];
     
     if (!constraint.attr.empty()) {
-      if (cfg.items.attributes.find(constraint.attr) == cfg.items.attributes.end()) {
+      if (!cfg.items.HasAttribute(constraint.attr)) {
         if (err) {
           std::ostringstream oss;
           oss << "constraint " << i << " references unknown attribute '" 
@@ -106,7 +151,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
   for (size_t i = 0; i < cfg.objective.size(); ++i) {
     const auto& term = cfg.objective[i];
     
-    if (cfg.items.attributes.find(term.attr) == cfg.items.attributes.end()) {
+    if (!cfg.items.HasAttribute(term.attr)) {
       if (err) {
         std::ostringstream oss;
         oss << "objective term " << i << " references unknown attribute '" 

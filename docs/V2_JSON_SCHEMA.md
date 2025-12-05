@@ -55,14 +55,15 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
 
 ```typescript
 {
-  "count": number,                // Required: Number of items
-  "attributes": {                 // Required: Map of attribute name -> array
-    "attribute_name": number[]   // Each array must have length = count
+  "count": number,                // Required: Number of rows/items
+  "attributes": {                 // Required: Map of attribute name -> payload
+    "attribute_name": number[] | ExternalAttributeSpec
   }
 }
 ```
 
-**Example:**
+Inline arrays (the original format) still work exactly the same:
+
 ```json
 {
   "count": 3,
@@ -74,10 +75,73 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
 }
 ```
 
+For large datasets you can now stream attributes from disk or pipes by providing an **ExternalAttributeSpec** object instead of an inline array:
+
+```typescript
+type ExternalAttributeSpec = {
+  "source": "file" | "stream",
+  "format"?: "binary64_le",     // Currently supported encoding
+  "path"?: string,               // File that contains doubles for this attribute
+  "chunks"?: string[],           // Optional list of chunk files appended sequentially
+  "channel"?: string,            // Stream identifier ("stdin" or file://...)
+  "offset_bytes"?: number        // Byte offset applied to the first file
+}
+```
+
+**File-backed example (raw doubles on disk):**
+
+```json
+{
+  "count": 100000,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "binary64_le",
+      "path": "data/value.bin"
+    },
+    "weight": {
+      "source": "file",
+      "format": "binary64_le",
+      "path": "data/weight_part1.bin",
+      "chunks": ["data/weight_part2.bin"]
+    }
+  }
+}
+```
+
+**Streaming example (pipe/STDIN):**
+
+```json
+{
+  "count": 500000,
+  "attributes": {
+    "value": {
+      "source": "stream",
+      "channel": "stdin",
+      "format": "binary64_le"
+    },
+    "weight": {
+      "source": "stream",
+      "channel": "file://tmp/weight.pipe",
+      "format": "binary64_le"
+    }
+  }
+}
+```
+
 **Rules:**
 - `count` must be > 0
-- Every attribute array must have exactly `count` elements
-- You can have any number of attributes (not just value/weight)
+- Inline arrays must have exactly `count` elements
+- External specs must provide either `path`/`chunks` (file mode) or `channel`/`chunks` (stream mode)
+- Supported encoding today is `binary64_le` (raw IEEE-754 doubles)
+- You can mix inline, file, and stream attributes within the same request
+
+#### How ingestion works under the hood
+
+- All payloads flow through the new `HostSoABuilder` (see `include/v2/Data.h`), which enforces `items.count` while accepting column chunks or streaming rows.
+- **File mode** reads raw doubles from `path` followed by any `chunks`, optionally skipping `offset_bytes` bytes in the first file. Use this for `.bin` or `.npy`-style assets sitting next to the config JSON.
+- **Stream mode** reads raw doubles from a live channel. Use `"channel": "stdin"` to push data via standard input, or `"channel": "file://..."` to attach an already-open FIFO. If you don't have an actual pipe yet, provide a list of `chunks` and the solver will treat them as a streamed sequence.
+- Every attribute remains columnar/SoA. If you need row-wise streaming, emit each column sequentially (value stream, weight stream, …) or use the builder API directly in CGO/C++ to push rows.
 
 ### BlockSpec
 
@@ -572,10 +636,11 @@ Before calling `solve_knapsack_v2_from_json`:
 - [ ] `version` is 2
 - [ ] `mode` is "select" (only mode currently supported)
 - [ ] `items.count` > 0
-- [ ] Every attribute array has length = `items.count`
+- [ ] Every inline attribute array has length = `items.count`
+- [ ] Every external attribute spec (`source: file|stream`) declares a path/channel and uses `format = "binary64_le"`
 - [ ] `objective` array is not empty
-- [ ] All `objective[].attr` names exist in `items.attributes`
-- [ ] All `constraints[].attr` names exist in `items.attributes`
+- [ ] All `objective[].attr` names exist in either `items.attributes` or external specs
+- [ ] All `constraints[].attr` names exist in either `items.attributes` or external specs
 - [ ] `blocks` array exists (can be empty or single block covering all items)
 - [ ] JSON is valid (use `json.Marshal` or validate with JSON parser)
 

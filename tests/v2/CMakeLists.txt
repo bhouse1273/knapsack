@@ -19,6 +19,12 @@ target_include_directories(test_config_validate PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_config_validate PRIVATE catch2 knapsack)
 target_compile_features(test_config_validate PRIVATE cxx_std_17)
 
+# Test executable for data ingestion helpers
+add_executable(test_data_ingest test_data_ingest.cpp)
+target_include_directories(test_data_ingest PRIVATE ${TEST_INCLUDE_DIRS})
+target_link_libraries(test_data_ingest PRIVATE catch2 knapsack)
+target_compile_features(test_data_ingest PRIVATE cxx_std_17)
+
 # Test executable for Beam Search
 add_executable(test_beam_search test_beam_search.cpp)
 target_include_directories(test_beam_search PRIVATE ${TEST_INCLUDE_DIRS})
@@ -78,6 +84,7 @@ enable_testing()
 
 # Add tests to CTest
 add_test(NAME config_validate COMMAND test_config_validate)
+add_test(NAME data_ingest COMMAND test_data_ingest)
 add_test(NAME beam_search COMMAND test_beam_search)
 add_test(NAME eval_cpu COMMAND test_eval_cpu)
 add_test(NAME rl_api COMMAND test_rl_api)
@@ -94,6 +101,11 @@ endif()
 # Optional: Set test properties
 set_tests_properties(config_validate PROPERTIES
     LABELS "v2;validation"
+    TIMEOUT 60
+)
+
+set_tests_properties(data_ingest PROPERTIES
+    LABELS "v2;data"
     TIMEOUT 60
 )
 
@@ -116,11 +128,11 @@ set_tests_properties(rl_api PROPERTIES
 # Custom target to build all tests
 if(APPLE AND USE_METAL)
     add_custom_target(build_tests
-        DEPENDS test_config_validate test_beam_search test_eval_cpu test_rl_api test_eval_metal
+        DEPENDS test_config_validate test_data_ingest test_beam_search test_eval_cpu test_rl_api test_eval_metal
     )
 else()
     add_custom_target(build_tests
-        DEPENDS test_config_validate test_beam_search test_eval_cpu test_rl_api
+        DEPENDS test_config_validate test_data_ingest test_beam_search test_eval_cpu test_rl_api
     )
 endif()
 
@@ -133,6 +145,7 @@ add_custom_target(run_tests
 
 message(STATUS "Configured v2 tests:")
 message(STATUS "  - test_config_validate")
+message(STATUS "  - test_data_ingest")
 message(STATUS "  - test_beam_search")
 message(STATUS "  - test_eval_cpu")
 message(STATUS "  - test_rl_api")

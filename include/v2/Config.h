@@ -3,12 +3,32 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
 
 namespace v2 {
+
+enum class AttributeSourceKind {
+  kInline,
+  kFile,
+  kStream,
+};
+
+struct AttributeSourceSpec {
+  AttributeSourceKind kind = AttributeSourceKind::kInline;
+  std::string format = "binary64_le";   // encoding of payload
+  std::string path;                      // primary path for file/chunk inputs
+  std::vector<std::string> chunks;       // optional chunk files processed sequentially
+  std::string channel;                   // named pipe/descriptor for streaming (e.g., "stdin")
+  std::size_t offset_bytes = 0;          // byte offset for binary files (applied to first chunk)
+
+  bool is_inline() const { return kind == AttributeSourceKind::kInline; }
+  bool is_file() const { return kind == AttributeSourceKind::kFile; }
+  bool is_stream() const { return kind == AttributeSourceKind::kStream; }
+};
 
 struct PenaltySpec {
   double weight = 0.0;   // penalty coefficient
@@ -38,8 +58,19 @@ struct BlockSpec {
 
 struct ItemsSpec {
   int count = 0; // total items
-  // Attribute arrays in Structure-of-Arrays form, all sized [count]
+  // Inline attribute payloads in Structure-of-Arrays form, all sized [count]
   std::map<std::string, std::vector<double>> attributes;
+  // Optional external attribute descriptors (file/stream-backed)
+  std::map<std::string, AttributeSourceSpec> sources;
+
+  bool HasAttribute(const std::string& name) const {
+    return attributes.find(name) != attributes.end() || sources.find(name) != sources.end();
+  }
+
+  const AttributeSourceSpec* FindSource(const std::string& name) const {
+    auto it = sources.find(name);
+    return it == sources.end() ? nullptr : &it->second;
+  }
 };
 
 struct KnapsackSpec {

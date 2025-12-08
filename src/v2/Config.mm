@@ -7,8 +7,21 @@
 
 #include "v2/Config.h"
 
+#include <cstddef>
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <sstream>
+static v2::AttributeFormatKind FormatFromString(const std::string& format) {
+  std::string lower = format;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (lower == "binary64_le" || lower == "binary64" || lower == "binary" || lower == "float64") return v2::AttributeFormatKind::kBinary64LE;
+  if (lower == "csv") return v2::AttributeFormatKind::kCSV;
+  if (lower == "arrow") return v2::AttributeFormatKind::kArrow;
+  if (lower == "parquet") return v2::AttributeFormatKind::kParquet;
+  return v2::AttributeFormatKind::kUnknown;
+}
+
 
 namespace v2 {
 
@@ -19,6 +32,59 @@ static bool validateItems(const ItemsSpec& items, std::string* err) {
     if ((int)vec.size() != items.count) {
       if (err) *err = "attribute '" + name + "' size (" + std::to_string(vec.size()) + ") != items.count (" + std::to_string(items.count) + ")";
       return false;
+    }
+  }
+  for (const auto& kv : items.sources) {
+    const auto& name = kv.first;
+    const auto& spec = kv.second;
+    if (items.attributes.count(name)) {
+      if (err) *err = "attribute '" + name + "' provided both inline and via external source";
+      return false;
+    }
+    if (spec.kind == AttributeSourceKind::kInline) {
+      if (err) *err = "attribute '" + name + "' external spec missing source";
+      return false;
+    }
+    if (spec.is_file() && spec.path.empty() && spec.chunks.empty()) {
+      if (err) *err = "file-backed attribute '" + name + "' missing path/chunks";
+      return false;
+    }
+    if (spec.is_stream() && spec.channel.empty() && spec.chunks.empty()) {
+      if (err) *err = "stream-backed attribute '" + name + "' missing channel/chunks";
+      return false;
+    }
+    switch (spec.format_kind) {
+      case AttributeFormatKind::kBinary64LE:
+        break;
+      case AttributeFormatKind::kCSV:
+        if (spec.csv_delimiter == '\0') {
+          if (err) *err = "attribute '" + name + "' csv delimiter must be non-zero";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kArrow:
+        if (!spec.is_file()) {
+          if (err) *err = "attribute '" + name + "' Arrow format requires file source";
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) *err = "attribute '" + name + "' Arrow format requires column or column_index";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kParquet:
+        if (!spec.is_file()) {
+          if (err) *err = "attribute '" + name + "' Parquet format supports files only";
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) *err = "attribute '" + name + "' Parquet format requires column or column_index";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kUnknown:
+        if (err) *err = "attribute '" + name + "' format '" + spec.format + "' unsupported";
+        return false;
     }
   }
   return true;
@@ -69,7 +135,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       if (err) *err = "knapsack.capacity_attr required in assign mode";
       return false;
     }
-    if (!cfg.items.attributes.count(cfg.knapsack.capacity_attr)) {
+    if (!cfg.items.HasAttribute(cfg.knapsack.capacity_attr)) {
       if (err) *err = "capacity_attr '" + cfg.knapsack.capacity_attr + "' not found in items.attributes";
       return false;
     }
@@ -79,13 +145,13 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     return false;
   }
   for (const auto& term : cfg.objective) {
-    if (!cfg.items.attributes.count(term.attr)) {
+    if (!cfg.items.HasAttribute(term.attr)) {
       if (err) *err = "objective attr '" + term.attr + "' not found in items.attributes";
       return false;
     }
   }
   for (const auto& c : cfg.constraints) {
-    if (c.attr.size() && !cfg.items.attributes.count(c.attr)) {
+    if (c.attr.size() && !cfg.items.HasAttribute(c.attr)) {
       if (err) *err = "constraint attr '" + c.attr + "' not found in items.attributes";
       return false;
     }
@@ -156,6 +222,76 @@ static bool getIntArray(NSDictionary* dict, NSString* key, std::vector<int>* out
   return true;
 }
 
+static bool parseExternalAttr(NSString* key, NSDictionary* obj, ItemsSpec* items, std::string* err) {
+  AttributeSourceSpec spec;
+  NSString* source = obj[@"source"];
+  if (!source || ![source isKindOfClass:[NSString class]]) {
+    if (err) *err = "attribute '" + std::string([key UTF8String]) + "' missing source";
+    return false;
+  }
+  std::string sourceStr([source UTF8String]);
+  if (sourceStr == "file") {
+    spec.kind = AttributeSourceKind::kFile;
+  } else if (sourceStr == "stream") {
+    spec.kind = AttributeSourceKind::kStream;
+  } else {
+    if (err) *err = "attribute '" + std::string([key UTF8String]) + "' has unsupported source";
+    return false;
+  }
+  NSString* fmt = obj[@"format"]; if (fmt) spec.format = std::string([fmt UTF8String]);
+  spec.format_kind = FormatFromString(spec.format);
+  NSString* path = obj[@"path"]; if (path) spec.path = std::string([path UTF8String]);
+  NSString* channel = obj[@"channel"]; if (channel) spec.channel = std::string([channel UTF8String]);
+  id offset = obj[@"offset_bytes"];
+  if (offset) {
+    if (![offset respondsToSelector:@selector(unsignedLongLongValue)]) {
+      if (err) *err = "attribute '" + std::string([key UTF8String]) + "' offset_bytes invalid";
+      return false;
+    }
+    spec.offset_bytes = (std::size_t)[offset unsignedLongLongValue];
+  }
+  id chunks = obj[@"chunks"];
+  if (chunks) {
+    if (![chunks isKindOfClass:[NSArray class]]) {
+      if (err) *err = "attribute '" + std::string([key UTF8String]) + "' chunks must be array";
+      return false;
+    }
+    for (id entry in (NSArray*)chunks) {
+      if (![entry isKindOfClass:[NSString class]]) {
+        if (err) *err = "attribute '" + std::string([key UTF8String]) + "' chunks must be strings";
+        return false;
+      }
+      spec.chunks.push_back(std::string([(NSString*)entry UTF8String]));
+    }
+  }
+  id delimiter = obj[@"delimiter"];
+  if (delimiter) {
+    if ([delimiter isKindOfClass:[NSString class]]) {
+      NSString* ds = (NSString*)delimiter;
+      spec.csv_delimiter = [ds length] > 0 ? [ds characterAtIndex:0] : '\0';
+    } else if ([delimiter respondsToSelector:@selector(intValue)]) {
+      spec.csv_delimiter = (char)[delimiter intValue];
+    }
+  }
+  id header = obj[@"has_header"];
+  if (header) {
+    if ([header respondsToSelector:@selector(boolValue)]) spec.csv_has_header = [header boolValue];
+  }
+  NSString* column = obj[@"column"];
+  if (column) spec.column_name = std::string([column UTF8String]);
+  id columnIdx = obj[@"column_index"];
+  if (columnIdx && [columnIdx respondsToSelector:@selector(intValue)]) spec.column_index = (int)[columnIdx intValue];
+  id optional = obj[@"optional"];
+  if (optional && [optional respondsToSelector:@selector(boolValue)]) spec.optional = [optional boolValue];
+  std::string attrName([key UTF8String]);
+  if (items->sources.count(attrName) || items->attributes.count(attrName)) {
+    if (err) *err = "duplicate attribute '" + attrName + "'";
+    return false;
+  }
+  items->sources[attrName] = std::move(spec);
+  return true;
+}
+
 static bool parseItems(NSDictionary* root, ItemsSpec* items, std::string* err) {
   NSDictionary* itemsDict = root[@"items"];
   if (!itemsDict || ![itemsDict isKindOfClass:[NSDictionary class]]) { if (err) *err = "missing 'items'"; return false; }
@@ -164,15 +300,23 @@ static bool parseItems(NSDictionary* root, ItemsSpec* items, std::string* err) {
   if (!attrs || ![attrs isKindOfClass:[NSDictionary class]]) { if (err) *err = "items.attributes missing"; return false; }
   for (NSString* key in attrs) {
     id val = attrs[key];
-    if (![val isKindOfClass:[NSArray class]]) { if (err) *err = "attribute '" + std::string([key UTF8String]) + "' not an array"; return false; }
-    std::vector<double> vec;
-    NSArray* arr = (NSArray*)val;
-    vec.reserve([arr count]);
-    for (id e in arr) {
-      if (![e respondsToSelector:@selector(doubleValue)]) { if (err) *err = "attribute '" + std::string([key UTF8String]) + "' contains non-numeric"; return false; }
-      vec.push_back([e doubleValue]);
+    if ([val isKindOfClass:[NSArray class]]) {
+      std::vector<double> vec;
+      NSArray* arr = (NSArray*)val;
+      vec.reserve([arr count]);
+      for (id e in arr) {
+        if (![e respondsToSelector:@selector(doubleValue)]) { if (err) *err = "attribute '" + std::string([key UTF8String]) + "' contains non-numeric"; return false; }
+        vec.push_back([e doubleValue]);
+      }
+      std::string attrName([key UTF8String]);
+      if (items->sources.count(attrName)) { if (err) *err = "duplicate attribute '" + attrName + "'"; return false; }
+      items->attributes[attrName] = std::move(vec);
+    } else if ([val isKindOfClass:[NSDictionary class]]) {
+      if (!parseExternalAttr(key, (NSDictionary*)val, items, err)) return false;
+    } else {
+      if (err) *err = "attribute '" + std::string([key UTF8String]) + "' must be array or object";
+      return false;
     }
-    items->attributes[std::string([key UTF8String])] = std::move(vec);
   }
   return true;
 }

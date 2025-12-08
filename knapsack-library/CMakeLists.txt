@@ -36,6 +36,7 @@ set(LIB_SOURCES ${LIB_CPP})
 set(PROJ_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 list(APPEND LIB_SOURCES
   "${PROJ_ROOT}/src/v2/Data.cpp"
+  "${PROJ_ROOT}/src/v2/DataFormats.cpp"
   "${PROJ_ROOT}/src/v2/EvalCPU.cpp"
   "${PROJ_ROOT}/src/v2/BeamSearch.cpp"
   "${PROJ_ROOT}/src/v2/Preprocess.cpp"
@@ -57,6 +58,11 @@ else()
 endif()
 
 add_library(knapsack STATIC ${LIB_SOURCES})
+
+if(KNAPSACK_ARROW_ENABLED)
+  target_compile_definitions(knapsack PRIVATE KNAPSACK_ARROW_ENABLED)
+  target_link_libraries(knapsack PUBLIC ${KNAPSACK_ARROW_LIBS})
+endif()
 
 # Set platform-specific output name
 if(BUILD_CPU_ONLY)
@@ -139,16 +145,18 @@ option(BUILD_ONNX "Build with ONNX Runtime support for RL" OFF)
 set(RL_DIR "${PROJ_ROOT}/rl")
 set(RL_SOURCES "${RL_DIR}/rl_api.cpp")
 
-# Create RL support library (static)
-add_library(rl_support STATIC ${RL_SOURCES})
-target_include_directories(rl_support
-  PUBLIC
-    ${RL_DIR}
-  PRIVATE
-    ${PROJ_ROOT}/include
-    ${PROJ_ROOT}
-)
-target_compile_features(rl_support PUBLIC cxx_std_17)
+# Create RL support library (static) if it does not already exist
+if(NOT TARGET rl_support)
+  add_library(rl_support STATIC ${RL_SOURCES})
+  target_include_directories(rl_support
+    PUBLIC
+      ${RL_DIR}
+    PRIVATE
+      ${PROJ_ROOT}/include
+      ${PROJ_ROOT}
+  )
+  target_compile_features(rl_support PUBLIC cxx_std_17)
+endif()
 
 # ONNX Runtime integration (optional)
 if(BUILD_ONNX)
@@ -160,9 +168,11 @@ if(BUILD_ONNX)
       get_filename_component(ONNXRUNTIME_INCLUDE_DIRS "${ONNX_INCLUDE_DIRS}" DIRECTORY)
     endif()
     
-    target_compile_definitions(rl_support PUBLIC RL_ONNX_ENABLED)
-    target_include_directories(rl_support PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
-    target_link_libraries(rl_support PRIVATE onnxruntime::onnxruntime)
+    if(TARGET rl_support)
+      target_compile_definitions(rl_support PUBLIC RL_ONNX_ENABLED)
+      target_include_directories(rl_support PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
+      target_link_libraries(rl_support PRIVATE onnxruntime::onnxruntime)
+    endif()
     message(STATUS "RL Support: ONNX Runtime enabled")
   else()
     message(WARNING "BUILD_ONNX=ON but onnxruntime not found. RL will use LinUCB bandit only.")
@@ -172,28 +182,39 @@ else()
 endif()
 
 # Create shared library variant for language bindings
-add_library(rl_support_shared SHARED ${RL_SOURCES})
-target_include_directories(rl_support_shared
-  PUBLIC
-    ${RL_DIR}
-  PRIVATE
-    ${PROJ_ROOT}/include
-    ${PROJ_ROOT}
-)
-target_compile_features(rl_support_shared PUBLIC cxx_std_17)
-set_target_properties(rl_support_shared PROPERTIES OUTPUT_NAME "rl_support")
+if(NOT TARGET rl_support_shared)
+  add_library(rl_support_shared SHARED ${RL_SOURCES})
+  target_include_directories(rl_support_shared
+    PUBLIC
+      ${RL_DIR}
+    PRIVATE
+      ${PROJ_ROOT}/include
+      ${PROJ_ROOT}
+  )
+  target_compile_features(rl_support_shared PUBLIC cxx_std_17)
+  set_target_properties(rl_support_shared PROPERTIES OUTPUT_NAME "rl_support")
+endif()
 
-if(BUILD_ONNX AND onnxruntime_FOUND)
+if(BUILD_ONNX AND onnxruntime_FOUND AND TARGET rl_support_shared)
   target_compile_definitions(rl_support_shared PUBLIC RL_ONNX_ENABLED)
   target_include_directories(rl_support_shared PRIVATE ${ONNXRUNTIME_INCLUDE_DIRS})
   target_link_libraries(rl_support_shared PRIVATE onnxruntime::onnxruntime)
 endif()
 
-# Install RL libraries and header
-install(TARGETS rl_support rl_support_shared
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin)
+# Install RL libraries and header (targets may come from parent project)
+if(TARGET rl_support)
+  install(TARGETS rl_support
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin)
+endif()
+
+if(TARGET rl_support_shared)
+  install(TARGETS rl_support_shared
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin)
+endif()
 
 install(FILES ${RL_DIR}/rl_api.h DESTINATION include)
 

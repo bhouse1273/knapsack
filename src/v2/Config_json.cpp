@@ -3,6 +3,9 @@
 
 #include "v2/Config.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -27,16 +30,113 @@ static bool get_object(const picojson::object& o, const char* key, picojson::obj
   auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<picojson::object>()) return false; *out = it->second.get<picojson::object>(); return true;
 }
 
+static AttributeFormatKind parse_format_kind(const std::string& format) {
+  std::string lower = format;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (lower == "binary64_le" || lower == "binary64" || lower == "binary" || lower == "float64") return AttributeFormatKind::kBinary64LE;
+  if (lower == "csv") return AttributeFormatKind::kCSV;
+  if (lower == "arrow") return AttributeFormatKind::kArrow;
+  if (lower == "parquet") return AttributeFormatKind::kParquet;
+  return AttributeFormatKind::kUnknown;
+}
+
+static bool parse_external_attr(const std::string& name, const picojson::object& obj, ItemsSpec* items, std::string* err) {
+  AttributeSourceSpec spec;
+  std::string source;
+  if (!get_string(obj, "source", &source)) {
+    if (err) *err = "attribute '" + name + "' missing source";
+    return false;
+  }
+  if (source == "file") {
+    spec.kind = AttributeSourceKind::kFile;
+  } else if (source == "stream") {
+    spec.kind = AttributeSourceKind::kStream;
+  } else {
+    if (err) *err = "attribute '" + name + "' has unsupported source '" + source + "'";
+    return false;
+  }
+  std::string format;
+  if (get_string(obj, "format", &format)) spec.format = format;
+  spec.format_kind = parse_format_kind(spec.format);
+  std::string path;
+  if (get_string(obj, "path", &path)) spec.path = path;
+  std::string channel;
+  if (get_string(obj, "channel", &channel)) spec.channel = channel;
+  auto it = obj.find("offset_bytes");
+  if (it != obj.end() && it->second.is<double>()) {
+    double raw = it->second.get<double>();
+    if (raw < 0) {
+      if (err) *err = "attribute '" + name + "' offset_bytes must be >= 0";
+      return false;
+    }
+    spec.offset_bytes = static_cast<std::size_t>(raw);
+  }
+  auto chunks_it = obj.find("chunks");
+  if (chunks_it != obj.end()) {
+    if (!chunks_it->second.is<picojson::array>()) {
+      if (err) *err = "attribute '" + name + "' chunks must be an array";
+      return false;
+    }
+    for (const auto& entry : chunks_it->second.get<picojson::array>()) {
+      if (!entry.is<std::string>()) {
+        if (err) *err = "attribute '" + name + "' chunks must be strings";
+        return false;
+      }
+      spec.chunks.push_back(entry.get<std::string>());
+    }
+  }
+  auto delim_it = obj.find("delimiter");
+  if (delim_it != obj.end()) {
+    if (delim_it->second.is<std::string>()) {
+      const auto& s = delim_it->second.get<std::string>();
+      spec.csv_delimiter = s.empty() ? '\0' : s[0];
+    } else if (delim_it->second.is<double>()) {
+      int v = static_cast<int>(delim_it->second.get<double>());
+      spec.csv_delimiter = static_cast<char>(v);
+    }
+  }
+  auto header_it = obj.find("has_header");
+  if (header_it != obj.end()) {
+    if (header_it->second.is<bool>()) spec.csv_has_header = header_it->second.get<bool>();
+    else if (header_it->second.is<double>()) spec.csv_has_header = header_it->second.get<double>() != 0.0;
+  }
+  auto column_it = obj.find("column");
+  if (column_it != obj.end() && column_it->second.is<std::string>()) spec.column_name = column_it->second.get<std::string>();
+  auto column_index_it = obj.find("column_index");
+  if (column_index_it != obj.end() && column_index_it->second.is<double>()) spec.column_index = static_cast<int>(column_index_it->second.get<double>());
+  auto optional_it = obj.find("optional");
+  if (optional_it != obj.end()) {
+    if (optional_it->second.is<bool>()) spec.optional = optional_it->second.get<bool>();
+    else if (optional_it->second.is<double>()) spec.optional = optional_it->second.get<double>() != 0.0;
+  }
+  if (items->sources.count(name) || items->attributes.count(name)) {
+    if (err) *err = "duplicate attribute '" + name + "'";
+    return false;
+  }
+  items->sources[name] = std::move(spec);
+  return true;
+}
+
 static bool parse_items(const picojson::object& root, ItemsSpec* items, std::string* err) {
   picojson::object itemsObj; if (!get_object(root, "items", &itemsObj)) { if (err) *err = "missing 'items'"; return false; }
   if (!get_int(itemsObj, "count", &items->count)) { if (err) *err = "items.count missing or invalid"; return false; }
   picojson::object attrs; if (!get_object(itemsObj, "attributes", &attrs)) { if (err) *err = "items.attributes missing"; return false; }
   for (const auto& kv : attrs) {
-    if (!kv.second.is<picojson::array>()) { if (err) *err = "attribute '" + kv.first + "' not an array"; return false; }
-    const auto& arr = kv.second.get<picojson::array>();
-    std::vector<double> vec; vec.reserve(arr.size());
-    for (const auto& e : arr) { if (!e.is<double>()) { if (err) *err = "attribute '" + kv.first + "' contains non-numeric"; return false; } vec.push_back(e.get<double>()); }
-    items->attributes[kv.first] = std::move(vec);
+    if (kv.second.is<picojson::array>()) {
+      const auto& arr = kv.second.get<picojson::array>();
+      std::vector<double> vec; vec.reserve(arr.size());
+      for (const auto& e : arr) {
+        if (!e.is<double>()) { if (err) *err = "attribute '" + kv.first + "' contains non-numeric"; return false; }
+        vec.push_back(e.get<double>());
+      }
+      if (items->sources.count(kv.first)) { if (err) *err = "duplicate attribute '" + kv.first + "'"; return false; }
+      items->attributes[kv.first] = std::move(vec);
+    } else if (kv.second.is<picojson::object>()) {
+      if (!parse_external_attr(kv.first, kv.second.get<picojson::object>(), items, err)) return false;
+    } else {
+      if (err) *err = "attribute '" + kv.first + "' must be array or object";
+      return false;
+    }
   }
   return true;
 }

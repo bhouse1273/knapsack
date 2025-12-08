@@ -28,6 +28,103 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       return false;
     }
   }
+
+  auto validate_source = [&](const std::string& name, const AttributeSourceSpec& spec) -> bool {
+    if (cfg.items.attributes.count(name)) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "attribute '" << name << "' provided both inline and as external source";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.kind == AttributeSourceKind::kInline) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "attribute '" << name << "' external spec must declare 'file' or 'stream' source";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.is_file() && spec.path.empty() && spec.chunks.empty()) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "file-backed attribute '" << name << "' missing path or chunks";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (spec.is_stream() && spec.channel.empty() && spec.chunks.empty()) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "stream-backed attribute '" << name << "' missing channel or chunks";
+        *err = oss.str();
+      }
+      return false;
+    }
+    switch (spec.format_kind) {
+      case AttributeFormatKind::kBinary64LE:
+        break;
+      case AttributeFormatKind::kCSV:
+        if (spec.csv_delimiter == '\0') {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' csv delimiter must be non-zero";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kArrow:
+        if (!spec.is_file()) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Arrow format requires 'file' source";
+            *err = oss.str();
+          }
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Arrow format requires column or column_index";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kParquet:
+        if (!spec.is_file()) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Parquet format supports file sources only";
+            *err = oss.str();
+          }
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Parquet format requires column or column_index";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kUnknown:
+        if (err) {
+          std::ostringstream oss;
+          oss << "attribute '" << name << "' declares unsupported format '" << spec.format << "'";
+          *err = oss.str();
+        }
+        return false;
+    }
+    return true;
+  };
+
+  for (const auto& kv : cfg.items.sources) {
+    if (!validate_source(kv.first, kv.second)) return false;
+  }
   
   // For assign mode, validate knapsack specs
   if (cfg.mode == "assign") {
@@ -65,7 +162,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       return false;
     }
     
-    if (cfg.items.attributes.find(cfg.knapsack.capacity_attr) == cfg.items.attributes.end()) {
+    if (!cfg.items.HasAttribute(cfg.knapsack.capacity_attr)) {
       if (err) {
         std::ostringstream oss;
         oss << "knapsack.capacity_attr '" << cfg.knapsack.capacity_attr 
@@ -81,7 +178,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     const auto& constraint = cfg.constraints[i];
     
     if (!constraint.attr.empty()) {
-      if (cfg.items.attributes.find(constraint.attr) == cfg.items.attributes.end()) {
+      if (!cfg.items.HasAttribute(constraint.attr)) {
         if (err) {
           std::ostringstream oss;
           oss << "constraint " << i << " references unknown attribute '" 
@@ -106,7 +203,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
   for (size_t i = 0; i < cfg.objective.size(); ++i) {
     const auto& term = cfg.objective[i];
     
-    if (cfg.items.attributes.find(term.attr) == cfg.items.attributes.end()) {
+    if (!cfg.items.HasAttribute(term.attr)) {
       if (err) {
         std::ostringstream oss;
         oss << "objective term " << i << " references unknown attribute '" 

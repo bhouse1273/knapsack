@@ -55,14 +55,15 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
 
 ```typescript
 {
-  "count": number,                // Required: Number of items
-  "attributes": {                 // Required: Map of attribute name -> array
-    "attribute_name": number[]   // Each array must have length = count
+  "count": number,                // Required: Number of rows/items
+  "attributes": {                 // Required: Map of attribute name -> payload
+    "attribute_name": number[] | ExternalAttributeSpec
   }
 }
 ```
 
-**Example:**
+Inline arrays (the original format) still work exactly the same:
+
 ```json
 {
   "count": 3,
@@ -74,10 +75,150 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
 }
 ```
 
+For large datasets you can now stream attributes from disk or pipes by providing an **ExternalAttributeSpec** object instead of an inline array:
+
+```typescript
+type ExternalAttributeSpec = {
+  "source": "file" | "stream",
+  "format"?: "binary64_le" | "csv",  // Encoding of payload (default binary64_le)
+  "path"?: string,                    // File that contains this attribute
+  "chunks"?: string[],                // Optional chunk files processed sequentially
+  "channel"?: string,                 // Stream identifier ("stdin" or file://...)
+  "offset_bytes"?: number,            // Byte offset applied to the first file (binary only)
+  "delimiter"?: string,               // CSV: column delimiter (default ",")
+  "has_header"?: boolean,             // CSV: true if first row is header
+  "column"?: string,                  // CSV: column name to read (requires header)
+  "column_index"?: number             // CSV: fallback column index (default 0)
+}
+```
+
+**File-backed example (raw doubles on disk):**
+
+```json
+{
+  "count": 100000,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "binary64_le",
+      "path": "data/value.bin"
+    },
+    "weight": {
+      "source": "file",
+      "format": "binary64_le",
+      "path": "data/weight_part1.bin",
+      "chunks": ["data/weight_part2.bin"]
+    }
+  }
+}
+```
+
+**CSV-backed example (one value per row):**
+
+```json
+{
+  "count": 4,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/value.csv",
+      "has_header": true,
+      "column": "value"
+    }
+  }
+}
+```
+
+**CSV-backed example (multiple columns, one file):**
+
+```json
+{
+  "count": 4,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "has_header": true,
+      "column": "value"
+    },
+    "weight": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "has_header": true,
+      "column": "weight"
+    },
+    "priority": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "column_index": 2
+    }
+  }
+}
+```
+
+Use the same CSV file for as many attributes as you like—the loader re-reads the file per column so each attribute can reference its own header name or `column_index`.
+
+**Streaming example (pipe/STDIN):**
+
+```json
+{
+  "count": 500000,
+  "attributes": {
+    "value": {
+      "source": "stream",
+      "channel": "stdin",
+      "format": "binary64_le"
+    },
+    "weight": {
+      "source": "stream",
+      "channel": "file://tmp/weight.pipe",
+      "format": "binary64_le"
+    }
+  }
+}
+```
+
+**CSV stream example (stdin with delimiter override):**
+
+```json
+{
+  "count": 1000,
+  "attributes": {
+    "value": {
+      "source": "stream",
+      "format": "csv",
+      "channel": "stdin",
+      "delimiter": "|",
+      "has_header": false,
+      "column_index": 0
+    }
+  }
+}
+```
+
+Pipe newline-delimited rows into stdin (or reference `file://path/to/fifo`) using the requested delimiter. Each attribute creates its own stream subscription, so you can combine CSV streams with binary streams in the same request as long as every attribute produces exactly `items.count` rows.
+
 **Rules:**
 - `count` must be > 0
-- Every attribute array must have exactly `count` elements
-- You can have any number of attributes (not just value/weight)
+- Inline arrays must have exactly `count` elements
+- External specs must provide either `path`/`chunks` (file mode) or `channel` (stream mode)
+- Supported encodings today:
+  - `binary64_le`: raw IEEE-754 doubles (requires binary files or streams)
+  - `csv`: newline-delimited textual values (one file or stream per attribute)
+  - `arrow`: Arrow IPC/Feather files, column selected by `column` or `column_index`
+  - `parquet`: Parquet columnar files, column selected by `column` or `column_index`
+- You can mix inline, file, and stream attributes within the same request
+
+#### How ingestion works under the hood
+
+- All payloads flow through the new `HostSoABuilder` (see `include/v2/Data.h`), which enforces `items.count` while accepting column chunks or streaming rows.
+- **File mode** reads raw doubles from `path` followed by any `chunks`, optionally skipping `offset_bytes` bytes in the first file. Use this for `.bin` or `.npy`-style assets sitting next to the config JSON.
+- **Stream mode** reads raw doubles from a live channel. Use `"channel": "stdin"` to push data via standard input, or `"channel": "file://..."` to attach an already-open FIFO. If you don't have an actual pipe yet, provide a list of `chunks` and the solver will treat them as a streamed sequence.
+- Every attribute remains columnar/SoA. If you need row-wise streaming, emit each column sequentially (value stream, weight stream, …) or use the builder API directly in CGO/C++ to push rows.
 
 ### BlockSpec
 
@@ -85,6 +226,39 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
 {
   "name"?: string,               // Optional: Block name
   "start"?: number,              // Optional: Starting index (0-based)
+```json
+{
+  "count": 1024,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "arrow",
+      "path": "data/items.arrow",
+      "column": "value"
+    }
+  }
+}
+```
+
+Arrow support expects on-disk IPC/Feather files. Provide `column` (preferred) or `column_index` to select the numeric column to ingest. Streaming Arrow pipes are not yet supported.
+
+**Parquet example (re-using a data lake file):**
+
+```json
+{
+  "count": 25000,
+  "attributes": {
+    "weight": {
+      "source": "file",
+      "format": "parquet",
+      "path": "/mnt/data/items.parquet",
+      "column": "weight_kg"
+    }
+  }
+}
+```
+
+Parquet ingestion currently works for local files (single file or `chunks` list). Like Arrow, select the numeric column via `column` or `column_index`.
   "count"?: number,              // Optional: Number of items in block
   "indices"?: number[]           // Optional: Explicit item indices
 }
@@ -572,10 +746,11 @@ Before calling `solve_knapsack_v2_from_json`:
 - [ ] `version` is 2
 - [ ] `mode` is "select" (only mode currently supported)
 - [ ] `items.count` > 0
-- [ ] Every attribute array has length = `items.count`
+- [ ] Every inline attribute array has length = `items.count`
+- [ ] Every external attribute spec (`source: file|stream`) declares a path/channel and uses `format = "binary64_le"`
 - [ ] `objective` array is not empty
-- [ ] All `objective[].attr` names exist in `items.attributes`
-- [ ] All `constraints[].attr` names exist in `items.attributes`
+- [ ] All `objective[].attr` names exist in either `items.attributes` or external specs
+- [ ] All `constraints[].attr` names exist in either `items.attributes` or external specs
 - [ ] `blocks` array exists (can be empty or single block covering all items)
 - [ ] JSON is valid (use `json.Marshal` or validate with JSON parser)
 

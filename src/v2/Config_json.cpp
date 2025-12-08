@@ -3,6 +3,8 @@
 
 #include "v2/Config.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <fstream>
 #include <sstream>
@@ -28,6 +30,16 @@ static bool get_object(const picojson::object& o, const char* key, picojson::obj
   auto it = o.find(key); if (it == o.end()) return false; if (!it->second.is<picojson::object>()) return false; *out = it->second.get<picojson::object>(); return true;
 }
 
+static AttributeFormatKind parse_format_kind(const std::string& format) {
+  std::string lower = format;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (lower == "binary64_le" || lower == "binary64" || lower == "binary" || lower == "float64") return AttributeFormatKind::kBinary64LE;
+  if (lower == "csv") return AttributeFormatKind::kCSV;
+  if (lower == "arrow") return AttributeFormatKind::kArrow;
+  if (lower == "parquet") return AttributeFormatKind::kParquet;
+  return AttributeFormatKind::kUnknown;
+}
+
 static bool parse_external_attr(const std::string& name, const picojson::object& obj, ItemsSpec* items, std::string* err) {
   AttributeSourceSpec spec;
   std::string source;
@@ -45,6 +57,7 @@ static bool parse_external_attr(const std::string& name, const picojson::object&
   }
   std::string format;
   if (get_string(obj, "format", &format)) spec.format = format;
+  spec.format_kind = parse_format_kind(spec.format);
   std::string path;
   if (get_string(obj, "path", &path)) spec.path = path;
   std::string channel;
@@ -71,6 +84,30 @@ static bool parse_external_attr(const std::string& name, const picojson::object&
       }
       spec.chunks.push_back(entry.get<std::string>());
     }
+  }
+  auto delim_it = obj.find("delimiter");
+  if (delim_it != obj.end()) {
+    if (delim_it->second.is<std::string>()) {
+      const auto& s = delim_it->second.get<std::string>();
+      spec.csv_delimiter = s.empty() ? '\0' : s[0];
+    } else if (delim_it->second.is<double>()) {
+      int v = static_cast<int>(delim_it->second.get<double>());
+      spec.csv_delimiter = static_cast<char>(v);
+    }
+  }
+  auto header_it = obj.find("has_header");
+  if (header_it != obj.end()) {
+    if (header_it->second.is<bool>()) spec.csv_has_header = header_it->second.get<bool>();
+    else if (header_it->second.is<double>()) spec.csv_has_header = header_it->second.get<double>() != 0.0;
+  }
+  auto column_it = obj.find("column");
+  if (column_it != obj.end() && column_it->second.is<std::string>()) spec.column_name = column_it->second.get<std::string>();
+  auto column_index_it = obj.find("column_index");
+  if (column_index_it != obj.end() && column_index_it->second.is<double>()) spec.column_index = static_cast<int>(column_index_it->second.get<double>());
+  auto optional_it = obj.find("optional");
+  if (optional_it != obj.end()) {
+    if (optional_it->second.is<bool>()) spec.optional = optional_it->second.get<bool>();
+    else if (optional_it->second.is<double>()) spec.optional = optional_it->second.get<double>() != 0.0;
   }
   if (items->sources.count(name) || items->attributes.count(name)) {
     if (err) *err = "duplicate attribute '" + name + "'";

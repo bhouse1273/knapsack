@@ -8,8 +8,20 @@
 #include "v2/Config.h"
 
 #include <cstddef>
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <sstream>
+static v2::AttributeFormatKind FormatFromString(const std::string& format) {
+  std::string lower = format;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (lower == "binary64_le" || lower == "binary64" || lower == "binary" || lower == "float64") return v2::AttributeFormatKind::kBinary64LE;
+  if (lower == "csv") return v2::AttributeFormatKind::kCSV;
+  if (lower == "arrow") return v2::AttributeFormatKind::kArrow;
+  if (lower == "parquet") return v2::AttributeFormatKind::kParquet;
+  return v2::AttributeFormatKind::kUnknown;
+}
+
 
 namespace v2 {
 
@@ -41,9 +53,38 @@ static bool validateItems(const ItemsSpec& items, std::string* err) {
       if (err) *err = "stream-backed attribute '" + name + "' missing channel/chunks";
       return false;
     }
-    if (spec.format != "binary64_le") {
-      if (err) *err = "attribute '" + name + "' format '" + spec.format + "' unsupported";
-      return false;
+    switch (spec.format_kind) {
+      case AttributeFormatKind::kBinary64LE:
+        break;
+      case AttributeFormatKind::kCSV:
+        if (spec.csv_delimiter == '\0') {
+          if (err) *err = "attribute '" + name + "' csv delimiter must be non-zero";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kArrow:
+        if (!spec.is_file()) {
+          if (err) *err = "attribute '" + name + "' Arrow format requires file source";
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) *err = "attribute '" + name + "' Arrow format requires column or column_index";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kParquet:
+        if (!spec.is_file()) {
+          if (err) *err = "attribute '" + name + "' Parquet format supports files only";
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) *err = "attribute '" + name + "' Parquet format requires column or column_index";
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kUnknown:
+        if (err) *err = "attribute '" + name + "' format '" + spec.format + "' unsupported";
+        return false;
     }
   }
   return true;
@@ -198,6 +239,7 @@ static bool parseExternalAttr(NSString* key, NSDictionary* obj, ItemsSpec* items
     return false;
   }
   NSString* fmt = obj[@"format"]; if (fmt) spec.format = std::string([fmt UTF8String]);
+  spec.format_kind = FormatFromString(spec.format);
   NSString* path = obj[@"path"]; if (path) spec.path = std::string([path UTF8String]);
   NSString* channel = obj[@"channel"]; if (channel) spec.channel = std::string([channel UTF8String]);
   id offset = obj[@"offset_bytes"];
@@ -222,6 +264,25 @@ static bool parseExternalAttr(NSString* key, NSDictionary* obj, ItemsSpec* items
       spec.chunks.push_back(std::string([(NSString*)entry UTF8String]));
     }
   }
+  id delimiter = obj[@"delimiter"];
+  if (delimiter) {
+    if ([delimiter isKindOfClass:[NSString class]]) {
+      NSString* ds = (NSString*)delimiter;
+      spec.csv_delimiter = [ds length] > 0 ? [ds characterAtIndex:0] : '\0';
+    } else if ([delimiter respondsToSelector:@selector(intValue)]) {
+      spec.csv_delimiter = (char)[delimiter intValue];
+    }
+  }
+  id header = obj[@"has_header"];
+  if (header) {
+    if ([header respondsToSelector:@selector(boolValue)]) spec.csv_has_header = [header boolValue];
+  }
+  NSString* column = obj[@"column"];
+  if (column) spec.column_name = std::string([column UTF8String]);
+  id columnIdx = obj[@"column_index"];
+  if (columnIdx && [columnIdx respondsToSelector:@selector(intValue)]) spec.column_index = (int)[columnIdx intValue];
+  id optional = obj[@"optional"];
+  if (optional && [optional respondsToSelector:@selector(boolValue)]) spec.optional = [optional boolValue];
   std::string attrName([key UTF8String]);
   if (items->sources.count(attrName) || items->attributes.count(attrName)) {
     if (err) *err = "duplicate attribute '" + attrName + "'";

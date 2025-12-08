@@ -36,6 +36,7 @@ set(LIB_SOURCES ${LIB_CPP})
 set(PROJ_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 list(APPEND LIB_SOURCES
   "${PROJ_ROOT}/src/v2/Data.cpp"
+  "${PROJ_ROOT}/src/v2/DataFormats.cpp"
   "${PROJ_ROOT}/src/v2/EvalCPU.cpp"
   "${PROJ_ROOT}/src/v2/BeamSearch.cpp"
   "${PROJ_ROOT}/src/v2/Preprocess.cpp"
@@ -57,6 +58,11 @@ else()
 endif()
 
 add_library(knapsack STATIC ${LIB_SOURCES})
+
+if(KNAPSACK_ARROW_ENABLED)
+  target_compile_definitions(knapsack PRIVATE KNAPSACK_ARROW_ENABLED)
+  target_link_libraries(knapsack PUBLIC ${KNAPSACK_ARROW_LIBS})
+endif()
 
 # Set platform-specific output name
 if(BUILD_CPU_ONLY)

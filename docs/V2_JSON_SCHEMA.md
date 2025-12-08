@@ -80,11 +80,15 @@ For large datasets you can now stream attributes from disk or pipes by providing
 ```typescript
 type ExternalAttributeSpec = {
   "source": "file" | "stream",
-  "format"?: "binary64_le",     // Currently supported encoding
-  "path"?: string,               // File that contains doubles for this attribute
-  "chunks"?: string[],           // Optional list of chunk files appended sequentially
-  "channel"?: string,            // Stream identifier ("stdin" or file://...)
-  "offset_bytes"?: number        // Byte offset applied to the first file
+  "format"?: "binary64_le" | "csv",  // Encoding of payload (default binary64_le)
+  "path"?: string,                    // File that contains this attribute
+  "chunks"?: string[],                // Optional chunk files processed sequentially
+  "channel"?: string,                 // Stream identifier ("stdin" or file://...)
+  "offset_bytes"?: number,            // Byte offset applied to the first file (binary only)
+  "delimiter"?: string,               // CSV: column delimiter (default ",")
+  "has_header"?: boolean,             // CSV: true if first row is header
+  "column"?: string,                  // CSV: column name to read (requires header)
+  "column_index"?: number             // CSV: fallback column index (default 0)
 }
 ```
 
@@ -109,6 +113,55 @@ type ExternalAttributeSpec = {
 }
 ```
 
+**CSV-backed example (one value per row):**
+
+```json
+{
+  "count": 4,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/value.csv",
+      "has_header": true,
+      "column": "value"
+    }
+  }
+}
+```
+
+**CSV-backed example (multiple columns, one file):**
+
+```json
+{
+  "count": 4,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "has_header": true,
+      "column": "value"
+    },
+    "weight": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "has_header": true,
+      "column": "weight"
+    },
+    "priority": {
+      "source": "file",
+      "format": "csv",
+      "path": "data/items.csv",
+      "column_index": 2
+    }
+  }
+}
+```
+
+Use the same CSV file for as many attributes as you like—the loader re-reads the file per column so each attribute can reference its own header name or `column_index`.
+
 **Streaming example (pipe/STDIN):**
 
 ```json
@@ -129,11 +182,35 @@ type ExternalAttributeSpec = {
 }
 ```
 
+**CSV stream example (stdin with delimiter override):**
+
+```json
+{
+  "count": 1000,
+  "attributes": {
+    "value": {
+      "source": "stream",
+      "format": "csv",
+      "channel": "stdin",
+      "delimiter": "|",
+      "has_header": false,
+      "column_index": 0
+    }
+  }
+}
+```
+
+Pipe newline-delimited rows into stdin (or reference `file://path/to/fifo`) using the requested delimiter. Each attribute creates its own stream subscription, so you can combine CSV streams with binary streams in the same request as long as every attribute produces exactly `items.count` rows.
+
 **Rules:**
 - `count` must be > 0
 - Inline arrays must have exactly `count` elements
-- External specs must provide either `path`/`chunks` (file mode) or `channel`/`chunks` (stream mode)
-- Supported encoding today is `binary64_le` (raw IEEE-754 doubles)
+- External specs must provide either `path`/`chunks` (file mode) or `channel` (stream mode)
+- Supported encodings today:
+  - `binary64_le`: raw IEEE-754 doubles (requires binary files or streams)
+  - `csv`: newline-delimited textual values (one file or stream per attribute)
+  - `arrow`: Arrow IPC/Feather files, column selected by `column` or `column_index`
+  - `parquet`: Parquet columnar files, column selected by `column` or `column_index`
 - You can mix inline, file, and stream attributes within the same request
 
 #### How ingestion works under the hood
@@ -149,6 +226,39 @@ type ExternalAttributeSpec = {
 {
   "name"?: string,               // Optional: Block name
   "start"?: number,              // Optional: Starting index (0-based)
+```json
+{
+  "count": 1024,
+  "attributes": {
+    "value": {
+      "source": "file",
+      "format": "arrow",
+      "path": "data/items.arrow",
+      "column": "value"
+    }
+  }
+}
+```
+
+Arrow support expects on-disk IPC/Feather files. Provide `column` (preferred) or `column_index` to select the numeric column to ingest. Streaming Arrow pipes are not yet supported.
+
+**Parquet example (re-using a data lake file):**
+
+```json
+{
+  "count": 25000,
+  "attributes": {
+    "weight": {
+      "source": "file",
+      "format": "parquet",
+      "path": "/mnt/data/items.parquet",
+      "column": "weight_kg"
+    }
+  }
+}
+```
+
+Parquet ingestion currently works for local files (single file or `chunks` list). Like Arrow, select the numeric column via `column` or `column_index`.
   "count"?: number,              // Optional: Number of items in block
   "indices"?: number[]           // Optional: Explicit item indices
 }

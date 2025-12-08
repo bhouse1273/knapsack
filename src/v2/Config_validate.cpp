@@ -29,9 +29,7 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     }
   }
 
-  for (const auto& kv : cfg.items.sources) {
-    const auto& name = kv.first;
-    const auto& spec = kv.second;
+  auto validate_source = [&](const std::string& name, const AttributeSourceSpec& spec) -> bool {
     if (cfg.items.attributes.count(name)) {
       if (err) {
         std::ostringstream oss;
@@ -64,14 +62,68 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       }
       return false;
     }
-    if (spec.format != "binary64_le") {
-      if (err) {
-        std::ostringstream oss;
-        oss << "attribute '" << name << "' declares unsupported format '" << spec.format << "'";
-        *err = oss.str();
-      }
-      return false;
+    switch (spec.format_kind) {
+      case AttributeFormatKind::kBinary64LE:
+        break;
+      case AttributeFormatKind::kCSV:
+        if (spec.csv_delimiter == '\0') {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' csv delimiter must be non-zero";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kArrow:
+        if (!spec.is_file()) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Arrow format requires 'file' source";
+            *err = oss.str();
+          }
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Arrow format requires column or column_index";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kParquet:
+        if (!spec.is_file()) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Parquet format supports file sources only";
+            *err = oss.str();
+          }
+          return false;
+        }
+        if (spec.column_name.empty() && spec.column_index < 0) {
+          if (err) {
+            std::ostringstream oss;
+            oss << "attribute '" << name << "' Parquet format requires column or column_index";
+            *err = oss.str();
+          }
+          return false;
+        }
+        break;
+      case AttributeFormatKind::kUnknown:
+        if (err) {
+          std::ostringstream oss;
+          oss << "attribute '" << name << "' declares unsupported format '" << spec.format << "'";
+          *err = oss.str();
+        }
+        return false;
     }
+    return true;
+  };
+
+  for (const auto& kv : cfg.items.sources) {
+    if (!validate_source(kv.first, kv.second)) return false;
   }
   
   // For assign mode, validate knapsack specs

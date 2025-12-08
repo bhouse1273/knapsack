@@ -17,17 +17,32 @@ enum class AttributeSourceKind {
   kStream,
 };
 
+enum class AttributeFormatKind {
+  kBinary64LE,
+  kCSV,
+  kArrow,
+  kParquet,
+  kUnknown,
+};
+
 struct AttributeSourceSpec {
   AttributeSourceKind kind = AttributeSourceKind::kInline;
   std::string format = "binary64_le";   // encoding of payload
+  AttributeFormatKind format_kind = AttributeFormatKind::kBinary64LE;
   std::string path;                      // primary path for file/chunk inputs
   std::vector<std::string> chunks;       // optional chunk files processed sequentially
   std::string channel;                   // named pipe/descriptor for streaming (e.g., "stdin")
   std::size_t offset_bytes = 0;          // byte offset for binary files (applied to first chunk)
+  char csv_delimiter = ',';              // CSV-specific delimiter
+  bool csv_has_header = false;           // CSV-specific header toggle
+  std::string column_name;               // Column name (CSV/Arrow/Parquet)
+  int column_index = -1;                 // Column index fallback
+  bool optional = false;                 // Allow missing external data
 
   bool is_inline() const { return kind == AttributeSourceKind::kInline; }
   bool is_file() const { return kind == AttributeSourceKind::kFile; }
   bool is_stream() const { return kind == AttributeSourceKind::kStream; }
+  AttributeFormatKind format_kind_enum() const { return format_kind; }
 };
 
 struct PenaltySpec {

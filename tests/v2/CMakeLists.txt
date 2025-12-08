@@ -23,6 +23,9 @@ target_compile_features(test_config_validate PRIVATE cxx_std_17)
 add_executable(test_data_ingest test_data_ingest.cpp)
 target_include_directories(test_data_ingest PRIVATE ${TEST_INCLUDE_DIRS})
 target_link_libraries(test_data_ingest PRIVATE catch2 knapsack)
+if(KNAPSACK_ARROW_ENABLED)
+    target_link_libraries(test_data_ingest PRIVATE ${KNAPSACK_ARROW_LIBS})
+endif()
 target_compile_features(test_data_ingest PRIVATE cxx_std_17)
 
 # Test executable for Beam Search
@@ -108,6 +111,11 @@ set_tests_properties(data_ingest PROPERTIES
     LABELS "v2;data"
     TIMEOUT 60
 )
+if(KNAPSACK_TESTDATA_ROOT)
+    set_tests_properties(data_ingest PROPERTIES
+        ENVIRONMENT "KNAPSACK_TESTDATA_ROOT=${KNAPSACK_TESTDATA_ROOT}"
+    )
+endif()
 
 set_tests_properties(beam_search PROPERTIES
     LABELS "v2;solver"

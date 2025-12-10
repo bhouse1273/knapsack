@@ -144,11 +144,24 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     if (err) *err = "objective must have at least one term";
     return false;
   }
-  for (const auto& term : cfg.objective) {
+  auto validate_strategy = [&](const CostTermSpec& term, size_t index) -> bool {
+    if (term.strategy != "weighted_sum" && term.strategy != "epsilon" && term.strategy != "pareto_component") {
+      if (err) *err = "objective term " + std::to_string(index) + " uses unsupported strategy";
+      return false;
+    }
+    if (term.strategy == "epsilon" && term.epsilon <= 0.0) {
+      if (err) *err = "objective term " + std::to_string(index) + " epsilon must be > 0";
+      return false;
+    }
+    return true;
+  };
+  for (size_t i = 0; i < cfg.objective.size(); ++i) {
+    const auto& term = cfg.objective[i];
     if (!cfg.items.HasAttribute(term.attr)) {
       if (err) *err = "objective attr '" + term.attr + "' not found in items.attributes";
       return false;
     }
+    if (!validate_strategy(term, i)) return false;
   }
   for (const auto& c : cfg.constraints) {
     if (c.attr.size() && !cfg.items.HasAttribute(c.attr)) {
@@ -166,6 +179,67 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       }
     }
   }
+  auto validate_aoa = [&](const AOASolverSpec& spec, const char* label) -> bool {
+    if (spec.population <= 0) {
+      if (err) *err = std::string(label) + ".population must be > 0";
+      return false;
+    }
+    if (spec.max_iterations <= 0) {
+      if (err) *err = std::string(label) + ".max_iterations must be > 0";
+      return false;
+    }
+    if (spec.exploration_rate < 0.0 || spec.exploitation_rate < 0.0) {
+      if (err) *err = std::string(label) + ".exploration/exploitation must be >= 0";
+      return false;
+    }
+    if (spec.anneal_start <= 0.0 || spec.anneal_end < 0.0) {
+      if (err) *err = std::string(label) + ".anneal_start must be > 0 and anneal_end >= 0";
+      return false;
+    }
+    if (spec.repair_penalty < 0.0) {
+      if (err) *err = std::string(label) + ".repair_penalty must be >= 0";
+      return false;
+    }
+    return true;
+  };
+  auto validate_archive = [&](const ParetoArchiveSpec& archive) -> bool {
+    if (archive.max_size <= 0) {
+      if (err) *err = "pareto archive max_size must be > 0";
+      return false;
+    }
+    if (archive.dominance_epsilon < 0.0) {
+      if (err) *err = "pareto archive dominance_epsilon must be >= 0";
+      return false;
+    }
+    if (archive.diversity_metric != "crowding" && archive.diversity_metric != "hypervolume") {
+      if (err) *err = "pareto archive diversity_metric must be 'crowding' or 'hypervolume'";
+      return false;
+    }
+    return true;
+  };
+  auto validate_solver = [&]() -> bool {
+    if (cfg.solver.kind != "beam" && cfg.solver.kind != "aoa" && cfg.solver.kind != "moaoa") {
+      if (err) *err = "solver.kind '" + cfg.solver.kind + "' not recognized";
+      return false;
+    }
+    if (cfg.solver.kind == "aoa" || cfg.solver.kind == "moaoa") {
+      if (!validate_aoa(cfg.solver.aoa, "solver.aoa")) return false;
+    }
+    if (cfg.solver.kind == "moaoa") {
+      if (!validate_aoa(cfg.solver.moaoa.base, "solver.moaoa")) return false;
+      if (!validate_archive(cfg.solver.moaoa.archive)) return false;
+      if (cfg.solver.moaoa.weight_vectors <= 0) {
+        if (err) *err = "solver.moaoa.weight_vectors must be > 0";
+        return false;
+      }
+      if (cfg.solver.moaoa.archive_refresh <= 0) {
+        if (err) *err = "solver.moaoa.archive_refresh must be > 0";
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!validate_solver()) return false;
   return true;
 }
 
@@ -351,6 +425,9 @@ static bool parseObjective(NSDictionary* root, std::vector<CostTermSpec>* object
     NSString* attr = o[@"attr"]; if (!attr) { if (err) *err = "objective.attr missing"; return false; }
     ct.attr = std::string([attr UTF8String]);
     id w = o[@"weight"]; ct.weight = w ? [w doubleValue] : 1.0;
+    NSString* strat = o[@"strategy"]; if (strat) ct.strategy = std::string([strat UTF8String]);
+    id eps = o[@"epsilon"]; if (eps) ct.epsilon = [eps doubleValue];
+    id target = o[@"target"]; if (target) ct.target = [target doubleValue];
     objective->push_back(std::move(ct));
   }
   return true;
@@ -387,6 +464,48 @@ static bool parseKnapsack(NSDictionary* root, KnapsackSpec* ks, std::string* err
   return true;
 }
 
+static void parseArchiveDict(NSDictionary* dict, ParetoArchiveSpec* archive) {
+  id size = dict[@"max_size"]; if (size) archive->max_size = (int)[size intValue];
+  id eps = dict[@"dominance_epsilon"]; if (eps) archive->dominance_epsilon = [eps doubleValue];
+  NSString* diversity = dict[@"diversity_metric"]; if (diversity) archive->diversity_metric = std::string([diversity UTF8String]);
+  id feas = dict[@"keep_feasible_only"]; if (feas) archive->keep_feasible_only = [feas boolValue];
+}
+
+static void parseAOADict(NSDictionary* dict, AOASolverSpec* aoa) {
+  id pop = dict[@"population"]; if (pop) aoa->population = (int)[pop intValue];
+  id iters = dict[@"max_iterations"]; if (iters) aoa->max_iterations = (int)[iters intValue];
+  id explore = dict[@"exploration_rate"]; if (explore) aoa->exploration_rate = [explore doubleValue];
+  id exploit = dict[@"exploitation_rate"]; if (exploit) aoa->exploitation_rate = [exploit doubleValue];
+  id annealStart = dict[@"anneal_start"]; if (annealStart) aoa->anneal_start = [annealStart doubleValue];
+  id annealEnd = dict[@"anneal_end"]; if (annealEnd) aoa->anneal_end = [annealEnd doubleValue];
+  id repair = dict[@"repair_penalty"]; if (repair) aoa->repair_penalty = [repair doubleValue];
+}
+
+static void parseMOAOADict(NSDictionary* dict, MOAOASolverSpec* moaoa) {
+  parseAOADict(dict, &moaoa->base);
+  id weights = dict[@"weight_vectors"]; if (weights) moaoa->weight_vectors = (int)[weights intValue];
+  id refresh = dict[@"archive_refresh"]; if (refresh) moaoa->archive_refresh = (int)[refresh intValue];
+  NSDictionary* archive = dict[@"archive"];
+  if (archive && [archive isKindOfClass:[NSDictionary class]]) {
+    parseArchiveDict(archive, &moaoa->archive);
+  }
+}
+
+static void parseSolver(NSDictionary* root, SolverSpec* solver) {
+  solver->kind = "beam";
+  NSDictionary* dict = root[@"solver"];
+  if (!dict || ![dict isKindOfClass:[NSDictionary class]]) return;
+  NSString* kind = dict[@"kind"]; if (kind) solver->kind = std::string([kind UTF8String]);
+  NSDictionary* aoa = dict[@"aoa"];
+  if (aoa && [aoa isKindOfClass:[NSDictionary class]]) {
+    parseAOADict(aoa, &solver->aoa);
+  }
+  NSDictionary* moaoa = dict[@"moaoa"];
+  if (moaoa && [moaoa isKindOfClass:[NSDictionary class]]) {
+    parseMOAOADict(moaoa, &solver->moaoa);
+  }
+}
+
 bool LoadConfigFromJsonString(const std::string& json, Config* out, std::string* err) {
   if (!out) { if (err) *err = "out is null"; return false; }
   @autoreleasepool {
@@ -403,6 +522,7 @@ bool LoadConfigFromJsonString(const std::string& json, Config* out, std::string*
     int version = 2; getInt(root, @"version", &version); cfg.version = version;
     std::string mode; if (getString(root, @"mode", &mode)) cfg.mode = mode; else cfg.mode = "assign";
     std::uint64_t seed = 0; getUInt64(root, @"random_seed", &seed); cfg.random_seed = seed;
+    parseSolver(root, &cfg.solver);
 
     if (!parseItems(root, &cfg.items, err)) return false;
     if (!parseBlocks(root, &cfg.blocks, err)) return false;
@@ -439,6 +559,7 @@ bool LoadConfigFromFile(const std::string& path, Config* out, std::string* err) 
     int version = 2; getInt(root, @"version", &version); cfg.version = version;
     std::string mode; if (getString(root, @"mode", &mode)) cfg.mode = mode; else cfg.mode = "assign";
     std::uint64_t seed = 0; getUInt64(root, @"random_seed", &seed); cfg.random_seed = seed;
+    parseSolver(root, &cfg.solver);
 
     if (!parseItems(root, &cfg.items, err)) return false;
     if (!parseBlocks(root, &cfg.blocks, err)) return false;

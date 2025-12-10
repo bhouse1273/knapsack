@@ -61,6 +61,39 @@ struct ConstraintSpec {
 struct CostTermSpec {
   std::string attr;      // attribute name to score (e.g., "value")
   double weight = 1.0;   // contribution to objective
+  std::string strategy = "weighted_sum"; // weighted_sum | epsilon | pareto_component
+  double epsilon = 0.0;   // epsilon constraint threshold (for strategy == epsilon)
+  double target = 0.0;    // optional target value for hybrid strategies
+};
+
+struct ParetoArchiveSpec {
+  int max_size = 32;                 // maximum number of solutions kept in archive
+  double dominance_epsilon = 1e-9;   // tolerance when comparing objectives
+  std::string diversity_metric = "crowding"; // "crowding" | "hypervolume"
+  bool keep_feasible_only = true;    // drop infeasible members from archive
+};
+
+struct AOASolverSpec {
+  int population = 128;        // candidate count
+  int max_iterations = 500;    // iteration budget
+  double exploration_rate = 0.5; // relative time spent exploring
+  double exploitation_rate = 0.5; // relative time spent exploiting
+  double anneal_start = 1.0;   // initial temperature for annealing schedule
+  double anneal_end = 0.01;    // terminal temperature
+  double repair_penalty = 1.0; // penalty multiplier applied during constraint repair
+};
+
+struct MOAOASolverSpec {
+  AOASolverSpec base;          // shared arithmetic parameters
+  ParetoArchiveSpec archive;   // pareto archive configuration
+  int weight_vectors = 32;     // number of reference weight vectors
+  int archive_refresh = 5;     // iterations between archive resort / trimming
+};
+
+struct SolverSpec {
+  std::string kind = "beam";  // "beam" | "aoa" | "moaoa"
+  AOASolverSpec aoa;           // used when kind == "aoa"
+  MOAOASolverSpec moaoa;       // used when kind == "moaoa"
 };
 
 struct BlockSpec {
@@ -98,6 +131,7 @@ struct Config {
   int version = 2;                    // schema version
   std::string mode = "assign";       // "select" | "assign"
   std::uint64_t random_seed = 0;      // deterministic runs
+  SolverSpec solver;                  // solver selection + options
 
   ItemsSpec items;
   std::vector<BlockSpec> blocks;

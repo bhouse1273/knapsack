@@ -43,6 +43,7 @@ This document provides the **complete V2 JSON schema** for `solve_knapsack_v2_fr
   "version": number,              // Required: Always 2 for V2 API
   "mode": string,                 // Required: "select" or "assign"
   "random_seed"?: number,         // Optional: Random seed (default: 0)
+  "solver"?: SolverSpec,          // Optional: Solver selection + algorithm params
   "items": ItemsSpec,             // Required: Item definitions
   "blocks": BlockSpec[],          // Required: Item groupings (can be empty)
   "objective": CostTermSpec[],    // Required: Objective function
@@ -281,7 +282,10 @@ Parquet ingestion currently works for local files (single file or `chunks` list)
 ```typescript
 {
   "attr": string,                // Required: Attribute name to optimize
-  "weight"?: number              // Optional: Weight multiplier (default: 1.0)
+  "weight"?: number,             // Optional: Weight multiplier (default: 1.0)
+  "strategy"?: string,           // Optional: "weighted_sum" | "epsilon" | "pareto_component"
+  "epsilon"?: number,            // Optional: epsilon bound for epsilon strategy
+  "target"?: number              // Optional: reference target (for Pareto or reporting)
 }
 ```
 
@@ -299,6 +303,18 @@ Parquet ingestion currently works for local files (single file or `chunks` list)
   { "attr": "priority", "weight": 0.5 }
 ]
 ```
+
+**Advanced strategies example:**
+
+```json
+"objective": [
+  { "attr": "value", "weight": 1.0, "strategy": "weighted_sum" },
+  { "attr": "risk", "strategy": "epsilon", "epsilon": 0.15 },
+  { "attr": "co2", "strategy": "pareto_component", "target": 0.0 }
+]
+```
+
+`strategy` lets you promote a metric into the Pareto archive (`"pareto_component"`) or treat it like an epsilon-constraint (`"epsilon"`). Leave it unset (or set to `"weighted_sum"`) to keep the original behavior.
 
 ### ConstraintSpec
 

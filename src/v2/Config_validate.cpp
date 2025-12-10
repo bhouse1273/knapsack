@@ -1,5 +1,6 @@
 // Config_validate.cpp - Validation logic for v2::Config
 #include "v2/Config.h"
+#include <algorithm>
 #include <sstream>
 
 namespace v2 {
@@ -173,6 +174,33 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
     }
   }
   
+  if (cfg.objective.empty()) {
+    if (err) *err = "objective must have at least one term";
+    return false;
+  }
+
+  auto validate_strategy = [&](const CostTermSpec& term, size_t index) -> bool {
+    static const std::vector<std::string> allowed = {"weighted_sum", "epsilon", "pareto_component"};
+    bool ok = std::find(allowed.begin(), allowed.end(), term.strategy) != allowed.end();
+    if (!ok) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "objective term " << index << " has unsupported strategy '" << term.strategy << "'";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (term.strategy == "epsilon" && term.epsilon <= 0.0) {
+      if (err) {
+        std::ostringstream oss;
+        oss << "objective term " << index << " uses epsilon strategy but epsilon <= 0";
+        *err = oss.str();
+      }
+      return false;
+    }
+    return true;
+  };
+
   // Validate constraints reference valid attributes
   for (size_t i = 0; i < cfg.constraints.size(); ++i) {
     const auto& constraint = cfg.constraints[i];
@@ -212,7 +240,78 @@ bool ValidateConfig(const Config& cfg, std::string* err) {
       }
       return false;
     }
+    if (!validate_strategy(term, i)) return false;
   }
+
+  auto validate_aoa = [&](const AOASolverSpec& spec, const char* label) -> bool {
+    if (spec.population <= 0) {
+      if (err) *err = std::string(label) + ".population must be > 0";
+      return false;
+    }
+    if (spec.max_iterations <= 0) {
+      if (err) *err = std::string(label) + ".max_iterations must be > 0";
+      return false;
+    }
+    if (spec.exploration_rate < 0.0 || spec.exploitation_rate < 0.0) {
+      if (err) *err = std::string(label) + ".exploration/exploitation rates must be >= 0";
+      return false;
+    }
+    if (spec.anneal_start <= 0.0 || spec.anneal_end < 0.0) {
+      if (err) *err = std::string(label) + ".anneal_start must be > 0 and anneal_end >= 0";
+      return false;
+    }
+    if (spec.repair_penalty < 0.0) {
+      if (err) *err = std::string(label) + ".repair_penalty must be >= 0";
+      return false;
+    }
+    return true;
+  };
+
+  auto validate_archive = [&](const ParetoArchiveSpec& archive) -> bool {
+    if (archive.max_size <= 0) {
+      if (err) *err = "pareto archive max_size must be > 0";
+      return false;
+    }
+    if (archive.dominance_epsilon < 0.0) {
+      if (err) *err = "pareto archive dominance_epsilon must be >= 0";
+      return false;
+    }
+    if (archive.diversity_metric != "crowding" && archive.diversity_metric != "hypervolume") {
+      if (err) *err = "pareto archive diversity_metric must be 'crowding' or 'hypervolume'";
+      return false;
+    }
+    return true;
+  };
+
+  auto validate_solver = [&]() -> bool {
+    const std::string& kind = cfg.solver.kind;
+    if (kind != "beam" && kind != "aoa" && kind != "moaoa") {
+      if (err) {
+        std::ostringstream oss;
+        oss << "solver.kind '" << kind << "' not recognized";
+        *err = oss.str();
+      }
+      return false;
+    }
+    if (kind == "aoa" || kind == "moaoa") {
+      if (!validate_aoa(cfg.solver.aoa, "solver.aoa")) return false;
+    }
+    if (kind == "moaoa") {
+      if (!validate_aoa(cfg.solver.moaoa.base, "solver.moaoa")) return false;
+      if (!validate_archive(cfg.solver.moaoa.archive)) return false;
+      if (cfg.solver.moaoa.weight_vectors <= 0) {
+        if (err) *err = "solver.moaoa.weight_vectors must be > 0";
+        return false;
+      }
+      if (cfg.solver.moaoa.archive_refresh <= 0) {
+        if (err) *err = "solver.moaoa.archive_refresh must be > 0";
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!validate_solver()) return false;
   
   // Validation passed
   return true;

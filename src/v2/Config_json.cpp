@@ -170,6 +170,12 @@ static bool parse_objective(const picojson::object& root, std::vector<CostTermSp
     const auto& oo = e.get<picojson::object>();
     CostTermSpec ct; if (!get_string(oo, "attr", &ct.attr)) { if (err) *err = "objective.attr missing"; return false; }
     auto it = oo.find("weight"); ct.weight = (it != oo.end() && it->second.is<double>()) ? it->second.get<double>() : 1.0;
+    auto strat = oo.find("strategy");
+    if (strat != oo.end() && strat->second.is<std::string>()) ct.strategy = strat->second.get<std::string>();
+    auto eps = oo.find("epsilon");
+    if (eps != oo.end() && eps->second.is<double>()) ct.epsilon = eps->second.get<double>();
+    auto tgt = oo.find("target");
+    if (tgt != oo.end() && tgt->second.is<double>()) ct.target = tgt->second.get<double>();
     objective->push_back(std::move(ct));
   }
   return true;
@@ -210,11 +216,70 @@ static bool parse_knapsack(const picojson::object& root, KnapsackSpec* ks, std::
   return true;
 }
 
+static void parse_archive_spec(const picojson::object& obj, ParetoArchiveSpec* archive) {
+  auto size_it = obj.find("max_size");
+  if (size_it != obj.end() && size_it->second.is<double>()) archive->max_size = static_cast<int>(size_it->second.get<double>());
+  auto eps_it = obj.find("dominance_epsilon");
+  if (eps_it != obj.end() && eps_it->second.is<double>()) archive->dominance_epsilon = eps_it->second.get<double>();
+  auto div_it = obj.find("diversity_metric");
+  if (div_it != obj.end() && div_it->second.is<std::string>()) archive->diversity_metric = div_it->second.get<std::string>();
+  auto feas_it = obj.find("keep_feasible_only");
+  if (feas_it != obj.end()) {
+    if (feas_it->second.is<bool>()) archive->keep_feasible_only = feas_it->second.get<bool>();
+    else if (feas_it->second.is<double>()) archive->keep_feasible_only = (feas_it->second.get<double>() != 0.0);
+  }
+}
+
+static void parse_aoa_spec(const picojson::object& obj, AOASolverSpec* aoa) {
+  auto pop_it = obj.find("population");
+  if (pop_it != obj.end() && pop_it->second.is<double>()) aoa->population = static_cast<int>(pop_it->second.get<double>());
+  auto iter_it = obj.find("max_iterations");
+  if (iter_it != obj.end() && iter_it->second.is<double>()) aoa->max_iterations = static_cast<int>(iter_it->second.get<double>());
+  auto explore_it = obj.find("exploration_rate");
+  if (explore_it != obj.end() && explore_it->second.is<double>()) aoa->exploration_rate = explore_it->second.get<double>();
+  auto exploit_it = obj.find("exploitation_rate");
+  if (exploit_it != obj.end() && exploit_it->second.is<double>()) aoa->exploitation_rate = exploit_it->second.get<double>();
+  auto anneal_start_it = obj.find("anneal_start");
+  if (anneal_start_it != obj.end() && anneal_start_it->second.is<double>()) aoa->anneal_start = anneal_start_it->second.get<double>();
+  auto anneal_end_it = obj.find("anneal_end");
+  if (anneal_end_it != obj.end() && anneal_end_it->second.is<double>()) aoa->anneal_end = anneal_end_it->second.get<double>();
+  auto repair_it = obj.find("repair_penalty");
+  if (repair_it != obj.end() && repair_it->second.is<double>()) aoa->repair_penalty = repair_it->second.get<double>();
+}
+
+static void parse_moaoa_spec(const picojson::object& obj, MOAOASolverSpec* moaoa) {
+  parse_aoa_spec(obj, &moaoa->base);
+  auto weight_it = obj.find("weight_vectors");
+  if (weight_it != obj.end() && weight_it->second.is<double>()) moaoa->weight_vectors = static_cast<int>(weight_it->second.get<double>());
+  auto refresh_it = obj.find("archive_refresh");
+  if (refresh_it != obj.end() && refresh_it->second.is<double>()) moaoa->archive_refresh = static_cast<int>(refresh_it->second.get<double>());
+  auto archive_it = obj.find("archive");
+  if (archive_it != obj.end() && archive_it->second.is<picojson::object>()) {
+    parse_archive_spec(archive_it->second.get<picojson::object>(), &moaoa->archive);
+  }
+}
+
+static void parse_solver(const picojson::object& root, SolverSpec* solver) {
+  solver->kind = "beam";
+  picojson::object obj;
+  if (!get_object(root, "solver", &obj)) return;
+  (void)get_string(obj, "kind", &solver->kind);
+  auto aoa_it = obj.find("aoa");
+  if (aoa_it != obj.end() && aoa_it->second.is<picojson::object>()) {
+    parse_aoa_spec(aoa_it->second.get<picojson::object>(), &solver->aoa);
+  }
+  auto moaoa_it = obj.find("moaoa");
+  if (moaoa_it != obj.end() && moaoa_it->second.is<picojson::object>()) {
+    parse_moaoa_spec(moaoa_it->second.get<picojson::object>(), &solver->moaoa);
+  }
+}
+
 static bool parse_root(const picojson::object& root, Config* out, std::string* err) {
   Config cfg;
   int version = 2; (void)get_int(root, "version", &version); cfg.version = version;
   std::string mode; if (get_string(root, "mode", &mode)) cfg.mode = mode; else cfg.mode = "assign";
   std::uint64_t seed = 0; (void)get_uint64(root, "random_seed", &seed); cfg.random_seed = seed;
+  parse_solver(root, &cfg.solver);
 
   if (!parse_items(root, &cfg.items, err)) return false;
   if (!parse_blocks(root, &cfg.blocks, err)) return false;

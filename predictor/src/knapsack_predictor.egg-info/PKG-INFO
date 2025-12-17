@@ -1,0 +1,89 @@
+Metadata-Version: 2.4
+Name: knapsack-predictor
+Version: 0.1.0
+Summary: Predictive modeling and scoring pipelines for the knapsack optimizer
+Author: Knapsack contributors
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.26
+Requires-Dist: pandas>=2.1
+Requires-Dist: polars>=0.20
+Requires-Dist: pyarrow>=15.0
+Requires-Dist: pydantic>=2.5
+Requires-Dist: scikit-learn>=1.4
+Requires-Dist: xgboost>=2.0
+Requires-Dist: lightgbm>=4.1
+Requires-Dist: catboost>=1.2
+Requires-Dist: lifelines>=0.27
+Requires-Dist: pycox>=0.3
+Requires-Dist: mlflow>=2.9
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.24
+Requires-Dist: prefect>=2.14
+Requires-Dist: click>=8.1
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-cov>=4.1; extra == "dev"
+Requires-Dist: ruff>=0.1.9; extra == "dev"
+Requires-Dist: mypy>=1.8; extra == "dev"
+
+# Predictor module
+
+`predictor/` hosts every predictive workflow that feeds the knapsack optimizers. It owns
+feature definition, model training, batch/online scoring, and schema contracts that the
+solver consumes.
+
+## Directory layout
+
+```
+predictor/
+  pyproject.toml        # Python environment definition (uv/poetry compatible)
+  src/predictor/        # Library code
+  scripts/              # Thin CLI wrappers around pipelines
+  tests/                # pytest suites + fixtures
+```
+
+Important subpackages:
+
+* `predictor.features`: deterministic feature builders backed by declarative configs.
+* `predictor.models`: gradient-boosted trees, survival models, hurdle composition.
+* `predictor.pipelines`: training + batch export DAGs and orchestration helpers.
+* `predictor.serve`: FastAPI app that exposes online scoring.
+* `predictor.io`: Arrow schema validation + Parquet writers.
+
+## Quick start
+
+```bash
+cd predictor
+uv sync  # or: PYTHON=python3.11 make predictor-setup
+make -C .. predictor-setup  # optional convenience target defined at repo root
+```
+
+> **Python requirement**: CatBoost wheels are only published for CPython <= 3.12, so create your
+> virtualenv with `python3.11` (or `3.12.x`). Running `make predictor-setup` automatically uses the
+> interpreter pointed to by the `PYTHON` variable (defaults to `python3.11`).
+
+Available CLI entrypoints (all under `predictor/scripts`):
+
+* `train_baseline.py` – trains the baseline gradient-boosted + hurdle models.
+* `export_scores.py` – materializes scored Arrow/Parquet datasets for the solver.
+* `serve_api.py` – launches the FastAPI service for realtime inference.
+
+Each CLI accepts `--config` pointing to a YAML/JSON config in `configs/` (to be added as
+use cases sharpen). Default configs produce synthetic data so the solver can be wired up
+before real datasets are available.
+
+## Contracts
+
+* Batch output schema lives at `shared/schemas/predictor/item_scores.schema.json`.
+* Online scoring proto: `shared/schemas/predictor/score.proto`.
+* Schema compatibility is enforced in `predictor/tests/test_schema_contract.py`.
+
+## CI expectations
+
+1. Lint + formatting: `ruff check predictor` and `ruff format --check predictor`.
+2. Unit tests: `pytest predictor/tests`.
+3. Contract smoke: run `python predictor/scripts/export_scores.py --as-of today` and
+   ensure `knapsack` integration tests ingest the resulting Arrow file.
+
+Keep dependencies Python-only; CUDA/Metal requirements remain inside the solver tree.

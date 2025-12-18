@@ -44,6 +44,14 @@ Each CLI accepts `--config` pointing to a YAML/JSON config in `configs/` (to be 
 use cases sharpen). Default configs produce synthetic data so the solver can be wired up
 before real datasets are available.
 
+### CatBoost demo fixtures
+
+`tests/fixtures/catboost_accounts.json` contains a 15-row synthetic dataset that exercises
+categorical splits (state/product/strategy) and continuous drivers (balance, risk score).
+`pytest tests/unit/test_catboost_demo.py` fits a CPU-only `CatBoostRegressor` on that
+fixture, proving that our dependency pinning produces working wheels on macOS CI.
+Use these helpers when validating future CatBoost pipelines or MLflow exports.
+
 ## Contracts
 
 * Batch output schema lives at `shared/schemas/predictor/item_scores.schema.json`.

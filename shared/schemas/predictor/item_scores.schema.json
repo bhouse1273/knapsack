@@ -1,0 +1,15 @@
+{
+  "name": "predictor_item_scores",
+  "version": "1.0.0",
+  "description": "Arrow schema for predictor batch outputs consumed by knapsack",
+  "fields": [
+    {"name": "account_id", "type": "utf8", "required": true},
+    {"name": "strategy_id", "type": "utf8", "required": true},
+    {"name": "as_of_date", "type": "date32", "required": true},
+    {"name": "predicted_value", "type": "float64", "required": true},
+    {"name": "weight_vector", "type": "list<float32>", "required": false},
+    {"name": "pay_probability", "type": "float32", "required": false},
+    {"name": "hazard_curve", "type": "fixed_size_list<float32,12>", "required": false},
+    {"name": "schema_version", "type": "utf8", "required": true}
+  ]
+}

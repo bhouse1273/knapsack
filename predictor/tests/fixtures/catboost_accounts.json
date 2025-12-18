@@ -1,0 +1,17 @@
+[
+  {"account_id":"acct_001","state":"CA","product":"card","balance":1200,"days_past_due":5,"risk_score":0.72,"strategy_id":"default","amount_collected":106.6},
+  {"account_id":"acct_002","state":"CA","product":"installment","balance":950,"days_past_due":12,"risk_score":0.41,"strategy_id":"default","amount_collected":81.45},
+  {"account_id":"acct_003","state":"NY","product":"loan","balance":1350,"days_past_due":18,"risk_score":0.6,"strategy_id":"hardship","amount_collected":89.6},
+  {"account_id":"acct_004","state":"TX","product":"card","balance":800,"days_past_due":3,"risk_score":0.35,"strategy_id":"default","amount_collected":77.35},
+  {"account_id":"acct_005","state":"FL","product":"card","balance":1100,"days_past_due":25,"risk_score":0.2,"strategy_id":"hardship","amount_collected":67.0},
+  {"account_id":"acct_006","state":"NY","product":"installment","balance":1400,"days_past_due":9,"risk_score":0.83,"strategy_id":"default","amount_collected":102.95},
+  {"account_id":"acct_007","state":"TX","product":"loan","balance":1000,"days_past_due":14,"risk_score":0.27,"strategy_id":"hardship","amount_collected":75.15},
+  {"account_id":"acct_008","state":"CA","product":"loan","balance":1600,"days_past_due":6,"risk_score":0.91,"strategy_id":"default","amount_collected":125.75},
+  {"account_id":"acct_009","state":"FL","product":"installment","balance":700,"days_past_due":4,"risk_score":0.18,"strategy_id":"ramp","amount_collected":56.7},
+  {"account_id":"acct_010","state":"WA","product":"card","balance":1300,"days_past_due":8,"risk_score":0.66,"strategy_id":"default","amount_collected":101.9},
+  {"account_id":"acct_011","state":"NY","product":"card","balance":900,"days_past_due":2,"risk_score":0.37,"strategy_id":"ramp","amount_collected":79.25},
+  {"account_id":"acct_012","state":"TX","product":"installment","balance":1500,"days_past_due":16,"risk_score":0.58,"strategy_id":"default","amount_collected":107.1},
+  {"account_id":"acct_013","state":"FL","product":"loan","balance":1050,"days_past_due":7,"risk_score":0.49,"strategy_id":"default","amount_collected":74.85},
+  {"account_id":"acct_014","state":"WA","product":"installment","balance":1250,"days_past_due":11,"risk_score":0.32,"strategy_id":"hardship","amount_collected":91.8},
+  {"account_id":"acct_015","state":"CA","product":"card","balance":600,"days_past_due":1,"risk_score":0.15,"strategy_id":"pilot","amount_collected":70.95}
+]

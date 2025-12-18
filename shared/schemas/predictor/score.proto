@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package knapsack.predictor;
+
+message ScoreRequest {
+  repeated string account_id = 1;
+  string strategy_set = 2;
+}
+
+message ScoreRecord {
+  string account_id = 1;
+  string strategy_id = 2;
+  double predicted_value = 3;
+  double pay_probability = 4;
+  repeated float hazard_curve = 5;
+}
+
+message ScoreResponse {
+  string schema_version = 1;
+  repeated ScoreRecord records = 2;
+}

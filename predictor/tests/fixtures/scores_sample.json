@@ -1,0 +1,9 @@
+[
+  {
+    "account_id": "acct_1",
+    "strategy_id": "default",
+    "as_of_date": "2024-01-01",
+    "predicted_value": 123.45,
+    "schema_version": "1.0.0"
+  }
+]

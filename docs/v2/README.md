@@ -15,5 +15,28 @@ This is a minimal preview of the V2 config used to drive a general, block-aware,
   - capacity_attr: attribute used for capacity consumption (e.g. "weight")
 - objective: list of terms { attr, weight }
 - constraints: list of { kind, attr, limit, soft, penalty { weight, power } }
+- solver (optional): selects the search algorithm and its parameters
 
 See `example_assign.json` for a concrete instance.
+
+## Solver selection
+
+The V2 pipeline now accepts an optional `solver` block so you can flip between the default beam search and the new Arithmetic Optimization solvers without changing any other part of the config. Supported kinds today are:
+
+- `beam` (default if the block is omitted)
+- `aoa` for the single-objective Arithmetic Optimization Algorithm
+- `moaoa` for the multi-objective variant with Pareto archives
+
+Example snippet:
+
+```json
+"solver": {
+  "kind": "aoa",
+  "aoa": {
+    "population": 256,
+    "max_iterations": 1000
+  }
+}
+```
+
+Each solver kind expects a matching sub-object (`beam`, `aoa`, or `moaoa`) that contains its tuning parameters. For a full walkthrough of every field plus best-practice defaults, see `docs/AOA_MOAOA_USAGE.md`.

@@ -54,4 +54,12 @@ The root `setup.py` exposes a `knapsack_py` extension built with CMake. Its `ext
 2. **Python packages**: run `pip-licenses --format=markdown` inside `predictor` and update the tables when versions or licenses change.
 3. **Other assets**: if you integrate different datasets, fonts, or binaries, add a new subsection covering their provenance and usage limits.
 
+## Research References
+
+We also mirror select academic material for internal design discussions. These files remain under their original licenses; keep the source metadata in sync with arXiv/author releases.
+
+| Resource | Description | Location | License / Notes |
+| --- | --- | --- | --- |
+| "Constraint-Preserving QAOA for Knapsack" (arXiv:2511.17259v1) | Reference preprint used to guide the constraint-aware QAOA upgrades documented in `docs/QAOA_Improvements.md`. | `docs/QAOA-p1-2511.17259v1.pdf` | Provided under the license selected by the authors on arXiv (currently CC BY 4.0 per the PDF notice); do not redistribute outside this repo without adhering to those terms. |
+
 Maintaining this page ensures that MIT-licensed distributions of the knapsack solver remain compliant with all incorporated dependencies.

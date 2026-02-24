@@ -1,10 +1,11 @@
 #include "RecursiveSolver.h"
 #include "Constants.h"
+#include "qaoa/ConstraintQAOA.h"
 #include <vector>
 #include <algorithm>
 #include <cstring>
-#include <ctime>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <cmath>
 #include <fstream>
@@ -75,6 +76,83 @@ int argmax_score(const std::vector<float>& obj, const std::vector<float>& pen) {
     }
     return best;
 }
+
+std::vector<std::pair<int,int>> build_entangler_edges(const Context& ctx,
+                                                      const std::vector<Entity>& entities,
+                                                      int neighbors_per_node) {
+    std::vector<std::pair<int,int>> edges;
+    const int N = ctx.N;
+    if (N <= 1) return edges;
+    neighbors_per_node = std::max(1, neighbors_per_node);
+    std::vector<std::pair<double,int>> dist;
+    dist.reserve(std::max(1, N - 1));
+    for (int i = 0; i < N; ++i) {
+        dist.clear();
+        const auto& src = entities[ctx.item_indices[i]];
+        for (int j = 0; j < N; ++j) {
+            if (i == j) continue;
+            const auto& dst = entities[ctx.item_indices[j]];
+            double d = haversine(src.latitude, src.longitude, dst.latitude, dst.longitude);
+            dist.emplace_back(d, j);
+        }
+        std::sort(dist.begin(), dist.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
+        const int take = std::min(neighbors_per_node, static_cast<int>(dist.size()));
+        for (int k = 0; k < take; ++k) {
+            edges.emplace_back(i, dist[k].second);
+        }
+    }
+    if (N > 2) {
+        std::mt19937 rng(static_cast<unsigned>(N * 211u + neighbors_per_node * 17u));
+        std::uniform_int_distribution<int> pick(0, N - 1);
+        const int extras = std::max(1, N / 2);
+        for (int e = 0; e < extras; ++e) {
+            int a = pick(rng);
+            int b = pick(rng);
+            if (a == b) continue;
+            edges.emplace_back(a, b);
+        }
+    }
+    return edges;
+}
+
+std::vector<unsigned char> ints_to_bits(const std::vector<int>& src, int length) {
+    std::vector<unsigned char> bits(std::max(0, length), 0u);
+    const int limit = std::min(length, static_cast<int>(src.size()));
+    for (int i = 0; i < limit; ++i) bits[i] = src[i] ? 1u : 0u;
+    return bits;
+}
+
+std::vector<int> bits_to_plan(const std::vector<unsigned char>& bits) {
+    std::vector<int> plan(bits.size(), 0);
+    for (size_t i = 0; i < bits.size(); ++i) plan[i] = bits[i] ? 1 : 0;
+    return plan;
+}
+
+void evaluate_candidates_cpu(const std::vector<std::vector<unsigned char>>& cand_bits,
+                             const std::vector<float>& values,
+                             const std::vector<float>& weights,
+                             float capacity,
+                             std::vector<float>* obj,
+                             std::vector<float>* pen) {
+    const float penalty_coeff = 100.0f;
+    const size_t count = cand_bits.size();
+    obj->assign(count, 0.f);
+    pen->assign(count, 0.f);
+    for (size_t c = 0; c < count; ++c) {
+        float total_value = 0.f;
+        float total_weight = 0.f;
+        const auto& bits = cand_bits[c];
+        const size_t limit = std::min(bits.size(), values.size());
+        for (size_t i = 0; i < limit; ++i) {
+            if (!bits[i]) continue;
+            total_value += values[i];
+            total_weight += weights[i];
+        }
+        (*obj)[c] = total_value;
+        const float overflow = std::max(0.f, total_weight - capacity);
+        (*pen)[c] = penalty_coeff * overflow * overflow;
+    }
+}
 }
 
 std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, const std::vector<Entity>& entities) {
@@ -138,70 +216,53 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
         }
     }
 
+    const int N = ctx.N;
+    const int NUM_CAND = std::min(256, std::max(8, N * 8));
+    std::vector<float> weights(N, 0.f), values(N, 0.f);
+    float block_weight_sum = 0.f;
+    for (int i = 0; i < N; ++i) {
+        const auto& v = entities[ctx.item_indices[i]];
+        weights[i] = static_cast<float>(std::max(1, v.resourceUnits));
+        values[i] = weights[i] * static_cast<float>(std::max(1, v.priority));
+        block_weight_sum += weights[i];
+    }
+
+    ConstraintQAOAProblem qprob;
+    qprob.num_items = N;
+    qprob.weights = weights;
+    qprob.values = values;
+    qprob.capacity = static_cast<float>(target_team_size);
+    qprob.entangler_edges = build_entangler_edges(ctx, entities, std::max(2, std::min(5, N / 2)));
+    qprob.greedy_seed = ints_to_bits(greedy_plan, N);
+    qprob.analog_bias = (block_weight_sum <= 1e-3f) ? 0.f : std::min(1.f, static_cast<float>(target_team_size) / block_weight_sum);
+    for (const auto& warm : ctx.warm_population) {
+        qprob.warm_starts.push_back(ints_to_bits(warm, N));
+    }
+    if (qprob.warm_starts.empty() && !ctx.warm_seed.empty()) {
+        qprob.warm_starts.push_back(ints_to_bits(ctx.warm_seed, N));
+    }
+
+    ConstraintQAOAConfig qcfg;
+    qcfg.population_size = NUM_CAND;
+    qcfg.layers = std::clamp(N / 5, 2, 5);
+    qcfg.mixer_moves = std::max(3, N / 2);
+    qcfg.analog_passes = 2;
+    ConstraintQAOAEngine qengine(qcfg);
+    auto qaoa_result = qengine.run(qprob);
+    std::vector<std::vector<unsigned char>> cand_bits = qaoa_result.population;
+    if (cand_bits.empty()) cand_bits.push_back(qprob.greedy_seed);
+
+#ifdef DEBUG_VAN
+    std::cout << "🎛️ Constraint-QAOA layers=" << qcfg.layers
+              << " candidates=" << cand_bits.size()
+              << " warm=" << ctx.warm_population.size() << "\n";
+#endif
+
 #if defined(__APPLE__) && defined(KNAPSACK_METAL_SUPPORT)
     ensure_metal_ready();
-    if (g_metal_ready) {
-        // Build candidates: start with greedy, then random variations
-        const int N = ctx.N;
-        const int NUM_CAND = std::min(256, std::max(8, N * 8));
-        std::vector<std::vector<unsigned char>> cand_bits;
-        cand_bits.reserve(NUM_CAND);
-
-        // helper to clamp by capacity (optional)
-        auto clamp_capacity = [&](std::vector<unsigned char>& bits){
-            int sum = 0;
-            for (int i = 0; i < N; ++i) if (bits[i]) sum += std::max(1, entities[ctx.item_indices[i]].resourceUnits);
-            if (sum <= target_team_size) return;
-            // drop lowest value/weight until within capacity
-            std::vector<std::pair<double,int>> score_idx;
-            score_idx.reserve(N);
-            for (int i = 0; i < N; ++i) if (bits[i]) {
-                const auto& v = entities[ctx.item_indices[i]];
-                double value = std::max(1, v.resourceUnits) * std::max(1, v.priority);
-                double key = value / std::max(1, v.resourceUnits);
-                score_idx.emplace_back(key, i);
-            }
-            std::sort(score_idx.begin(), score_idx.end()); // remove lowest value density first
-            for (auto& kv : score_idx) {
-                if (sum <= target_team_size) break;
-                int i = kv.second;
-                bits[i] = 0;
-                sum -= std::max(1, entities[ctx.item_indices[i]].resourceUnits);
-            }
-        };
-
-        // 1) Greedy baseline
-        cand_bits.push_back(std::vector<unsigned char>(N, 0));
-        for (int i = 0; i < N; ++i) cand_bits[0][i] = greedy_plan[i] ? 1 : 0;
-
-        // 2) Single-bit improvements around greedy
-        for (int i = 0; i < N && static_cast<int>(cand_bits.size()) < NUM_CAND/2; ++i) {
-            auto v = cand_bits[0];
-            v[i] = v[i] ? 0u : 1u; // flip
-            clamp_capacity(v);
-            cand_bits.push_back(std::move(v));
-        }
-
-        // 3) Random candidates
-        std::mt19937 rng(static_cast<unsigned>(time(nullptr)));
-        std::bernoulli_distribution pick(0.4);
-        while (static_cast<int>(cand_bits.size()) < NUM_CAND) {
-            std::vector<unsigned char> v(N, 0);
-            for (int i = 0; i < N; ++i) v[i] = pick(rng) ? 1u : 0u;
-            clamp_capacity(v);
-            cand_bits.push_back(std::move(v));
-        }
-
-        // Prepare evaluator inputs
-    std::vector<float> values(N, 0.f), weights(N, 0.f), caps(1, static_cast<float>(target_team_size));
-        for (int i = 0; i < N; ++i) {
-            const auto& v = entities[ctx.item_indices[i]];
-            weights[i] = static_cast<float>(std::max(1, v.resourceUnits));
-            values[i] = weights[i] * static_cast<float>(std::max(1, v.priority));
-        }
-
+    if (g_metal_ready && !cand_bits.empty()) {
+        std::vector<float> caps(1, static_cast<float>(target_team_size));
         const auto packed = pack2bit(cand_bits, N);
-        const int bytes_per = (N + 3) / 4;
         const int num_cand = static_cast<int>(cand_bits.size());
         std::vector<float> obj(num_cand, 0.f), pen(num_cand, 0.f);
         MetalEvalIn in{
@@ -220,8 +281,7 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
         int rc = knapsack_metal_eval(&in, &out, err, sizeof(err));
         if (rc == 0) {
             int best_idx = argmax_score(obj, pen);
-            std::vector<int> best_plan(N, 0);
-            for (int i = 0; i < N; ++i) best_plan[i] = cand_bits[best_idx][i] ? 1 : 0;
+            std::vector<int> best_plan = bits_to_plan(cand_bits[best_idx]);
 #ifdef DEBUG_VAN
             std::cout << "🔎 Best plan (Metal eval): ";
             for (int bit : best_plan) std::cout << bit;
@@ -229,20 +289,23 @@ std::vector<int> recursive_worker(Context ctx, int depth, int target_team_size, 
 #endif
             return best_plan;
         } else {
-            std::cerr << "Metal eval failed: " << err << "; falling back to CPU heuristic.\n";
+            std::cerr << "Metal eval failed: " << err << "; falling back to CPU scoring.\n";
         }
     }
 #endif
 
-    // CPU heuristic fallback (also used on non-Apple platforms)
-    std::vector<int> best_plan(ctx.N, 0);
-    for (int i = 0; i < ctx.N; ++i) best_plan[i] = greedy_plan[i];
-
+    if (!cand_bits.empty()) {
+        std::vector<float> obj, pen;
+        evaluate_candidates_cpu(cand_bits, values, weights, static_cast<float>(target_team_size), &obj, &pen);
+        int best_idx = argmax_score(obj, pen);
+        std::vector<int> best_plan = bits_to_plan(cand_bits[best_idx]);
 #ifdef DEBUG_VAN
-    std::cout << "🔎 Best plan (CPU heuristic): ";
-    for (int bit : best_plan) std::cout << bit;
-    std::cout << "\n";
+        std::cout << "🔎 Best plan (CPU scoring): ";
+        for (int bit : best_plan) std::cout << bit;
+        std::cout << " score=" << (obj[best_idx]-pen[best_idx]) << "\n";
 #endif
+        return best_plan;
+    }
 
-    return best_plan;
+    return greedy_plan;
 }
